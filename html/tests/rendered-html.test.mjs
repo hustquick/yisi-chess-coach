@@ -27,3 +27,15 @@ test("HTML coach keeps feature parity with the native coach", async()=>{
   assert.match(page,/完成摆盘/);
   assert.match(page,/上一步：/);
 });
+
+test("board and play controls stay ahead of low-frequency mode settings", async()=>{
+  const page=await readFile(new URL("../app/page.tsx",import.meta.url),"utf8");
+  const settings=page.indexOf('<Module title="对弈与分析设置">');
+  assert.ok(page.indexOf('className="toolbar"')<settings);
+  assert.ok(page.indexOf('className="board-shell"')<settings);
+  assert.equal(page.includes('<Module title="对弈模式">'),false);
+  assert.equal(page.includes('GUI 与 UCI'),false);
+  assert.ok(page.indexOf('<Module title="教练分析"')<page.indexOf('<Module title="局势图"'));
+  assert.ok(page.indexOf('<Module title="局势图"')<settings);
+  assert.ok(settings<page.indexOf('<Module title="棋谱与存档">'));
+});

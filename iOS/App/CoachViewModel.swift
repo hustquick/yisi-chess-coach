@@ -21,6 +21,8 @@ final class CoachViewModel: ObservableObject {
     @Published private(set) var lastMove: String?
     @Published private(set) var moveHistory: [String] = []
     @Published private(set) var fenHistory: [String] = [ChessDefaults.startFEN]
+    @Published private(set) var redoMoves: [String] = []
+    @Published private(set) var redoFens: [String] = []
     @Published private(set) var evaluations: [EvaluationPoint] = []
     @Published var showCandidateArrows = false
     @Published private(set) var savedGames: [SavedGame] = []
@@ -36,6 +38,8 @@ final class CoachViewModel: ObservableObject {
     private var pendingBestScore: Double?
 
     var canHumanMove: Bool { gameOutcome == nil && (gameMode != .computer || sideToMove == humanSide) }
+    var canUndo: Bool { !moveHistory.isEmpty }
+    var canRedo: Bool { !redoMoves.isEmpty }
 
     func start() { loadSavedGames();scheduleAnalysis() }
     func setMode(_ mode: GameMode) {
@@ -78,24 +82,25 @@ final class CoachViewModel: ObservableObject {
         } else { selectedSquare = nil; legalTargets = []; selectedCandidates=[]; scheduleAnalysis() }
     }
 
-    func reset() { cancelAnalysis(); gameOutcome=nil;isShowingGameOutcome=false;fen = ChessDefaults.startFEN; moveHistory=[]; fenHistory=[fen]; evaluations=[]; lastMove=nil; lastMoveGrade="—";lastMoveReview="等待落子，Stockfish 将评价着法质量。";refresh(); scheduleAnalysis() }
+    func reset() { cancelAnalysis(); gameOutcome=nil;isShowingGameOutcome=false;fen = ChessDefaults.startFEN; moveHistory=[]; fenHistory=[fen]; redoMoves=[]; redoFens=[]; evaluations=[]; lastMove=nil; lastMoveGrade="—";lastMoveReview="等待落子，Stockfish 将评价着法质量。";refresh(); scheduleAnalysis() }
     func undo() {
-        guard moveHistory.count > 0 else { return }
-        cancelAnalysis(); moveHistory.removeLast(); fenHistory.removeLast(); fen = fenHistory.last ?? ChessDefaults.startFEN; lastMove = moveHistory.last; refresh(); scheduleAnalysis()
+        guard let move = moveHistory.last, let currentFen = fenHistory.last else { return }
+        cancelAnalysis(); redoMoves.insert(move, at: 0); redoFens.insert(currentFen, at: 0); moveHistory.removeLast(); fenHistory.removeLast(); fen = fenHistory.last ?? ChessDefaults.startFEN; lastMove = moveHistory.last; refresh(); scheduleAnalysis()
     }
+    func redo() { guard !redoMoves.isEmpty, !redoFens.isEmpty else { return }; cancelAnalysis(); let move=redoMoves.removeFirst(), next=redoFens.removeFirst(); moveHistory.append(move);fenHistory.append(next);fen=next;lastMove=move;refresh();scheduleAnalysis() }
     func flip() { boardFlipped.toggle() }
     func clearSelection(){selectedSquare=nil;legalTargets=[];selectedCandidates=[];scheduleAnalysis()}
     func toggleCandidateArrows() { showCandidateArrows.toggle() }
     func playCandidate(_ move: String) { guard ChessRules.allLegalMoves(in: fen).contains(move) else { return }; commit(move) }
     func goToPly(_ ply: Int) {
-        let safe = max(0, min(ply, moveHistory.count)); cancelAnalysis()
-        fen = fenHistory[safe]; moveHistory = Array(moveHistory.prefix(safe)); fenHistory = Array(fenHistory.prefix(safe + 1)); lastMove = moveHistory.last
+        let safe = max(0, min(ply, moveHistory.count)); cancelAnalysis(); let removedMoves=Array(moveHistory.dropFirst(safe)),removedFens=Array(fenHistory.dropFirst(safe+1))
+        fen = fenHistory[safe]; moveHistory = Array(moveHistory.prefix(safe)); fenHistory = Array(fenHistory.prefix(safe + 1)); redoMoves=removedMoves+redoMoves;redoFens=removedFens+redoFens;lastMove = moveHistory.last
         refresh(); scheduleAnalysis()
     }
     func importFEN(_ value: String) {
         let text=value.trimmingCharacters(in:.whitespacesAndNewlines), parsed=ParsedPosition.parse(fen:text)
         guard parsed.pieces.filter({$0.kind == .king}).count == 2 else { message="FEN 必须包含双方的王。"; return }
-        cancelAnalysis(); fen=text; moveHistory=[]; fenHistory=[text]; evaluations=[]; lastMove=nil; refresh(); scheduleAnalysis()
+        cancelAnalysis(); fen=text; moveHistory=[]; fenHistory=[text]; redoMoves=[]; redoFens=[]; evaluations=[]; lastMove=nil; refresh(); scheduleAnalysis()
     }
     func saveGame() {
         let game=SavedGame(id:UUID(),title:"国际象棋对局 · \(Date().formatted(date:.numeric,time:.shortened))",savedAt:Date(),initialFEN:fenHistory.first ?? ChessDefaults.startFEN,moves:moveHistory)
@@ -104,7 +109,7 @@ final class CoachViewModel: ObservableObject {
     func loadSavedGame(_ game:SavedGame) {
         cancelAnalysis(); var current=game.initialFEN; var positions=[current]; var valid:[String]=[]
         for move in game.moves where ChessRules.allLegalMoves(in: current).contains(move) { current=ChessRules.apply(move,to:current);positions.append(current);valid.append(move) }
-        fen=current;moveHistory=valid;fenHistory=positions;lastMove=valid.last;refresh();scheduleAnalysis()
+        fen=current;moveHistory=valid;fenHistory=positions;redoMoves=[];redoFens=[];lastMove=valid.last;refresh();scheduleAnalysis()
     }
     func dismissMessage(){message=nil}
     func setSetupTool(_ tool:SetupTool){setupTool=tool}
@@ -157,7 +162,7 @@ final class CoachViewModel: ObservableObject {
         pendingBestScore=candidates.first?.scorePawns
         cancelAnalysis() // rules and UI commit happen synchronously before any new search
         fen = ChessRules.apply(move, to: fen)
-        moveHistory.append(move); fenHistory.append(fen); lastMove=move; refresh()
+        moveHistory.append(move); fenHistory.append(fen); redoMoves=[];redoFens=[];lastMove=move; refresh()
         if gameOutcome != nil { return }
         if gameMode == .computer && sideToMove != humanSide { playComputerMove() } else { scheduleAnalysis() }
     }
@@ -188,7 +193,8 @@ final class CoachViewModel: ObservableObject {
     private func square(_ file:Int,_ rank:Int)->String { "\(Character(UnicodeScalar(97+file)!))\(8-rank)" }
     private func legalMove(from:String,to:String)->String? { ChessRules.legalMoves(from: from, in: fen).first { String($0.dropFirst(2).prefix(2)) == to } }
     private func describe(_ move:String)->String { move.count > 4 ? "\(move.prefix(4))=\(move.suffix(1).uppercased())" : move }
-    private func scoreText(_ line:EngineLine)->String { if abs(line.centipawns ?? 0) >= 100_000 { return "将杀" }; return String(format: "%+.2f", Double(line.centipawns ?? 0)/100) }
+    private func whiteScore(_ line:EngineLine)->Int { let cp=line.centipawns ?? 0; return sideToMove == .white ? cp : -cp }
+    private func scoreText(_ line:EngineLine)->String { let cp=whiteScore(line); if abs(cp) >= 100_000 { return cp >= 0 ? "白方将杀" : "黑方将杀" }; return String(format: "%+.2f", Double(cp)/100) }
     private func publishCandidates(_ lines: [EngineLine], generation: Int) {
         candidates = lines.enumerated().compactMap { index, line in
             guard let move = line.moves.first else { return nil }

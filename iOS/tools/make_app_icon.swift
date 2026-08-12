@@ -8,6 +8,7 @@ guard arguments.count == 3 else {
 let canvasSize = NSSize(width: 1024, height: 1024)
 let brandRed = NSColor(calibratedRed: 0.67, green: 0.10, blue: 0.08, alpha: 1)
 let darkFrame = NSColor(calibratedWhite: 0.055, alpha: 1)
+let sharedInnerBase = NSColor(calibratedRed: 0.96, green: 0.89, blue: 0.76, alpha: 1)
 
 func roundedRect(_ rect: NSRect, radius: CGFloat, color: NSColor) {
     color.setFill()
@@ -120,12 +121,12 @@ func render(output: String, frameColor: NSColor, innerColor: NSColor, markColor:
 try render(
     output: arguments[1],
     frameColor: brandRed,
-    innerColor: NSColor(calibratedRed: 0.98, green: 0.75, blue: 0.12, alpha: 1),
+    innerColor: sharedInnerBase,
     markColor: brandRed
 )
 try render(
     output: arguments[2],
     frameColor: darkFrame,
-    innerColor: NSColor(calibratedRed: 0.16, green: 0.045, blue: 0.055, alpha: 1),
-    markColor: NSColor(calibratedRed: 1.00, green: 0.72, blue: 0.08, alpha: 1)
+    innerColor: sharedInnerBase,
+    markColor: NSColor(calibratedRed: 0.10, green: 0.095, blue: 0.075, alpha: 1)
 )

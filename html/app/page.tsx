@@ -28,9 +28,15 @@ function scorePawns(value: string) {
   return Number(amount || 0) / 100;
 }
 
-function scoreText(value: string) {
+function whiteScorePawns(value: string, turn: Color) {
+  const valueForSideToMove = scorePawns(value);
+  return turn === "w" ? valueForSideToMove : -valueForSideToMove;
+}
+
+function scoreText(value: string, turn: Color) {
   const [, kind, amount] = value.match(/(cp|mate) (-?\d+)/) ?? [];
-  return kind === "mate" ? `将杀 ${amount}` : `${scorePawns(value) >= 0 ? "+" : ""}${scorePawns(value).toFixed(2)}`;
+  const white = whiteScorePawns(value, turn);
+  return kind === "mate" ? `${white >= 0 ? "白方" : "黑方"}将杀` : `${white >= 0 ? "+" : ""}${white.toFixed(2)}`;
 }
 
 function uciMove(from: Square, to: Square, promotion?: string) {
@@ -73,18 +79,29 @@ function gameOutcome(game: Chess): GameOutcome | null {
 
 function EvaluationChart({ points }: { points: EvalPoint[] }) {
   const width = 640, height = 150, padding = 18;
+  const left = padding + 22;
+  const largest = points
+    .map(point => Math.abs(point.value))
+    .filter(value => Number.isFinite(value) && value < 100)
+    .reduce((maximum, value) => Math.max(maximum, value), 0);
+  const range = Math.max(3, Math.ceil(largest));
+  const ticks = [range, range / 2, 0, -range / 2, -range];
+  const tickText = (value: number) => {
+    const absolute = Number.isInteger(Math.abs(value)) ? Math.abs(value).toFixed(0) : Math.abs(value).toFixed(1);
+    return value === 0 ? "0" : `${value > 0 ? "+" : "-"}${absolute}`;
+  };
   const coordinates = points.map((point, index) => {
-    const x = points.length < 2 ? width / 2 : padding + index * (width - padding * 2) / (points.length - 1);
-    const y = height / 2 - Math.max(-8, Math.min(8, point.value)) / 8 * (height / 2 - padding);
+    const x = points.length < 2 ? (left + width - padding) / 2 : left + index * (width - padding - left) / (points.length - 1);
+    const y = height / 2 - Math.max(-range, Math.min(range, point.value)) / range * (height / 2 - padding);
     return `${x},${y}`;
   }).join(" ");
   return <div className="chart-wrap">
     <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="白方视角局势评分曲线">
-      <line x1="0" y1={height / 2} x2={width} y2={height / 2} className="chart-zero" />
+      {ticks.map(value => { const y=height/2-value/range*(height/2-padding); return <g key={value}><line x1={left} y1={y} x2={width-padding} y2={y} className={value === 0 ? "chart-zero" : "chart-grid"}/><text x={left-5} y={y+4} className="chart-axis" textAnchor="end">{tickText(value)}</text></g>; })}
       {coordinates && <polyline points={coordinates} className="chart-line" />}
-      {points.length === 1 && <circle cx={width / 2} cy={height / 2 - Math.max(-8, Math.min(8, points[0].value)) / 8 * (height / 2 - padding)} r="5" className="chart-dot" />}
+      {points.length === 1 && <circle cx={(left + width - padding) / 2} cy={height / 2 - Math.max(-range, Math.min(range, points[0].value)) / range * (height / 2 - padding)} r="5" className="chart-dot" />}
     </svg>
-    <span className="chart-white">白方 +</span><span className="chart-black">黑方 +</span>
+    <span className="chart-white">白方优势</span><span className="chart-black">黑方优势</span>
   </div>;
 }
 
@@ -92,6 +109,7 @@ export default function Page() {
   const [chess, setChess] = useState(() => new Chess());
   const [initialFen, setInitialFen] = useState(startFen);
   const [moveHistory, setMoveHistory] = useState<MoveEntry[]>([]);
+  const [redoEntries, setRedoEntries] = useState<MoveEntry[]>([]);
   const [selected, setSelected] = useState<Square | null>(null);
   const [targets, setTargets] = useState<Set<string>>(new Set());
   const [flipped, setFlipped] = useState(false);
@@ -220,6 +238,7 @@ export default function Page() {
     if (gameOutcome(next)) setOutcomeOpen(true);
     moveCount.current++;
     setMoveHistory(previous => [...previous, { uci: move, san: made.san, fen: next.fen() }]);
+    setRedoEntries([]);
     setSelected(null); setTargets(new Set()); setSelectedLines([]);
     if (gameOutcome(next)) return;
     if (mode === "computer" && next.turn() !== human) queueMicrotask(() => analyze(next, "computer"));
@@ -265,7 +284,7 @@ export default function Page() {
     if (whiteKings !== 1 || blackKings !== 1) { setNotice("摆盘必须恰好包含一个白王和一个黑王。"); return; }
     try {
       const next = new Chess(setupFen(setupPosition, setupTurn));
-      cancelLocalRequest(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setEvaluations([]);
+      cancelLocalRequest(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setRedoEntries([]); setEvaluations([]);
       setSelected(null); setTargets(new Set()); setModeState(nextMode); setLastMoveGrade("—");
       queueMicrotask(() => analyze(next, nextMode === "computer" && next.turn() !== human ? "computer" : "global"));
     } catch (error) { setNotice(`无法完成摆盘：${(error as Error).message}`); }
@@ -288,15 +307,26 @@ export default function Page() {
     cancelLocalRequest();
     const safe = Math.max(0, Math.min(ply, moveHistory.length));
     const nextHistory = moveHistory.slice(0, safe);
+    const removed = moveHistory.slice(safe);
     const next = new Chess(safe === 0 ? initialFen : nextHistory[safe - 1].fen);
     moveCount.current = safe;
-    setChess(next); setMoveHistory(nextHistory); setSelected(null); setTargets(new Set()); setSelectedLines([]);
+    setChess(next); setMoveHistory(nextHistory); setRedoEntries(previous => [...removed, ...previous]); setSelected(null); setTargets(new Set()); setSelectedLines([]);
     setEvaluations(previous => previous.filter(point => point.ply <= safe));
     queueMicrotask(() => analyze(next, "global"));
   };
 
+  const redoMove = () => {
+    const entry = redoEntries[0];
+    if (!entry) return;
+    cancelLocalRequest();
+    const next = new Chess(entry.fen);
+    moveCount.current = moveHistory.length + 1;
+    setChess(next); setMoveHistory(previous => [...previous, entry]); setRedoEntries(previous => previous.slice(1));
+    setSelected(null); setTargets(new Set()); setSelectedLines([]); queueMicrotask(() => analyze(next, "global"));
+  };
+
   const reset = () => {
-    cancelLocalRequest(); setOutcomeOpen(false); moveCount.current = 0; const next = new Chess(); setChess(next); setInitialFen(startFen); setMoveHistory([]); setEvaluations([]);
+    cancelLocalRequest(); setOutcomeOpen(false); moveCount.current = 0; const next = new Chess(); setChess(next); setInitialFen(startFen); setMoveHistory([]); setRedoEntries([]); setEvaluations([]);
     setSelected(null); setTargets(new Set()); setSelectedLines([]); setLastMoveGrade("—"); setLastMoveReview("等待落子，Stockfish 将评价着法质量。");
     setModeState(mode === "setup" ? "local" : mode); queueMicrotask(() => analyze(next, "global"));
   };
@@ -310,14 +340,14 @@ export default function Page() {
     try {
       const next = new Chess(game.initialFen); const entries: MoveEntry[] = [];
       for (const uci of game.moves) { const made = next.move({ from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square, promotion: (uci[4] || "q") as PieceSymbol }); entries.push({ uci, san: made.san, fen: next.fen() }); }
-      cancelLocalRequest(); moveCount.current = entries.length; setChess(next); setInitialFen(game.initialFen); setMoveHistory(entries); setEvaluations([]); setRecordOpen(false); setSelected(null); setTargets(new Set());
+      cancelLocalRequest(); moveCount.current = entries.length; setChess(next); setInitialFen(game.initialFen); setMoveHistory(entries); setRedoEntries([]); setEvaluations([]); setRecordOpen(false); setSelected(null); setTargets(new Set());
       queueMicrotask(() => analyze(next, "global"));
     } catch (error) { setNotice(`棋谱无法载入：${(error as Error).message}`); }
   };
 
   const importFen = () => {
     try {
-      const next = new Chess(fenText.trim()); cancelLocalRequest(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setEvaluations([]); setRecordOpen(false);
+      const next = new Chess(fenText.trim()); cancelLocalRequest(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setRedoEntries([]); setEvaluations([]); setRecordOpen(false);
       setSelected(null); setTargets(new Set()); setModeState("local"); queueMicrotask(() => analyze(next, "global"));
     } catch (error) { setNotice(`FEN 无效：${(error as Error).message}`); }
   };
@@ -332,11 +362,9 @@ export default function Page() {
   };
 
   return <main>
-    <header><picture><source srcSet="/favicon-dark.png" media="(prefers-color-scheme: dark)" /><img className="logo" src="/favicon-light.png" alt="兵升变应用图标" /></picture><div className="brand"><h1>弈思</h1><p>国际象棋教练</p></div><span className="status">{status}</span></header>
+    <header><picture><source srcSet="/favicon-dark.png" media="(prefers-color-scheme: dark)" /><img className="logo" src="/favicon-light.png" alt="兵升变应用图标" /></picture><div className="brand"><h1>弈思</h1><p>国际象棋思考教练 · HTML</p></div><span className="status">{status}</span></header>
     <div className="layout"><section className="play">
-      <div className="mode"><button className={mode === "local" ? "active" : ""} onClick={() => changeMode("local")}>双人对弈</button><button className={mode === "computer" ? "active" : ""} onClick={() => changeMode("computer")}>人机对战</button><button className={mode === "setup" ? "active" : ""} onClick={() => changeMode("setup")}>摆盘</button></div>
-      <div className="toolbar"><strong>{mode === "setup" ? "摆盘模式" : `${chess.turn() === "w" ? "白方" : "黑方"}走棋`}</strong><span /><button className={showArrows ? "round active" : "round"} onClick={() => setShowArrows(value => !value)} aria-label={showArrows ? "隐藏候选箭头" : "显示候选箭头"}>优</button><button onClick={() => setFlipped(value => !value)}>⇅ 翻转</button><button disabled={!moveHistory.length || mode === "setup"} onClick={() => goToPly(moveHistory.length - 1)}>↩ 悔棋</button><button onClick={reset}>↻ 重开</button></div>
-      {mode === "setup" && <div className="setup-tools"><div><button className={setupTool === "move" ? "active" : ""} onClick={() => setSetupTool("move")}>移动</button><button className={setupTool === "erase" ? "active" : ""} onClick={() => setSetupTool("erase")}>删除</button><label>走棋方 <select value={setupTurn} onChange={event => setSetupTurn(event.target.value as Color)}><option value="w">白方</option><option value="b">黑方</option></select></label><button className="finish" onClick={() => finishSetup()}>完成摆盘</button></div>{(["w", "b"] as Color[]).map(color => <div className="setup-pieces" key={color}><small>{color === "w" ? "白方" : "黑方"}</small>{pieceTypes.map(type => <button key={type} className={setupTool === `${color}${type}` ? "active piece-tool" : "piece-tool"} onClick={() => setSetupTool(`${color}${type}`)}>{symbols[`${color}${type}`]}</button>)}</div>)}</div>}
+      <div className="toolbar"><div className="history-tools"><button disabled={!moveHistory.length || mode === "setup"} onClick={() => goToPly(moveHistory.length - 1)} aria-label="悔棋">↶</button><button disabled={!redoEntries.length || mode === "setup"} onClick={redoMove} aria-label="前进">↷</button></div><button className={showArrows ? "round active" : "round"} onClick={() => setShowArrows(value => !value)} aria-label={showArrows ? "隐藏候选箭头" : "显示候选箭头"}>优</button><strong>{mode === "setup" ? "摆盘模式" : `${chess.turn() === "w" ? "白方" : "黑方"}走棋`}</strong><div className="view-tools"><button onClick={() => setFlipped(value => !value)} aria-label="翻转棋盘">⇅</button><button onClick={reset} aria-label="重开">↻</button></div></div>
       <div className="board-shell"><div className="board">{ranks.flatMap((rank, ri) => files.map((file, fi) => {
         const square = `${file}${rank}` as Square;
         const piece = mode === "setup" ? setupPosition[square] : chess.get(square);
@@ -345,11 +373,10 @@ export default function Page() {
         return <button key={square} className={`square ${tone} ${selected === square ? "selected" : ""} ${targets.has(square) ? "target" : ""} ${isLast ? "last" : ""}`} onClick={() => clickSquare(square)} aria-label={square}>{piece && <span className={`piece ${piece.color}`}>{symbols[piece.color + piece.type]}</span>}{fi === 0 && <small className="rank-label">{rank}</small>}{ri === 7 && <small className="file-label">{file}</small>}</button>;
       }))}</div>{showArrows && lines.length > 0 && <svg className="candidate-arrows" viewBox="0 0 100 100" aria-hidden="true"><defs>{arrowColors.map((color, index) => <marker key={color} id={`head-${index}`} markerWidth="4" markerHeight="4" refX="3.2" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 Z" fill={color} /></marker>)}</defs>{lines.slice(0, 4).map((line, index) => { const move = line.pv.split(" ")[0], point = arrowGeometry(move), color = arrowColors[index]; return <g key={`${move}-${index}`}><line x1={point.x1} y1={point.y1} x2={point.x2} y2={point.y2} stroke={color} strokeWidth="1.2" strokeLinecap="round" markerEnd={`url(#head-${index})`} opacity=".82" /><circle cx={point.labelX} cy={point.labelY} r="2.7" fill={color} stroke="white" strokeWidth=".45" /><text x={point.labelX} y={point.labelY} className="arrow-number">{index + 1}</text></g>; })}</svg>}</div>
     </section><aside>
-      <Module title="教练分析" open><div className="review"><b>{moveHistory.length ? `上一步：${lastMoveGrade}` : "开局建议"}</b><span>{moveHistory.length ? lastMoveReview : "先看全局候选，再选择计划。"}</span></div><div className="candidate-heading"><b>{selected ? `${selected.toUpperCase()} 棋子的候选着法` : "全局候选着法"}</b>{selected && <button onClick={() => { setSelected(null); setTargets(new Set()); setSelectedLines([]); analyze(chess, "global"); }}>返回全局</button>}</div><div className="candidates">{visibleLines.length ? visibleLines.map((line, index) => { const move = line.pv.split(" ")[0]; return <button className="candidate" key={`${line.multipv}-${line.pv}`} disabled={!canHumanMove || mode === "setup"} onClick={() => commitMove(move)}><b>{index + 1}</b><span><code>{move.length > 4 ? `${move.slice(0, 4)}=${move[4].toUpperCase()}` : move}</code><small>{line.pv.split(" ").slice(0, 5).join("  ")}</small></span><em>{index === 0 ? "最佳" : "候选"}</em><strong>{scoreText(line.score)}</strong><small>d{line.depth}</small></button>; }) : <p>{status.includes("计算") || status.includes("分析") ? "Stockfish 正在计算…" : "暂无候选着法"}</p>}</div></Module>
+      <Module title="教练分析" open><div className="review"><b>{moveHistory.length ? `上一步：${lastMoveGrade}` : "开局建议"}</b><span>{moveHistory.length ? lastMoveReview : "先看全局候选，再选择计划。"}</span></div><div className="candidate-heading"><b>{selected ? `${selected.toUpperCase()} 棋子的候选着法` : "全局候选着法 · 白方视角"}</b>{selected && <button onClick={() => { setSelected(null); setTargets(new Set()); setSelectedLines([]); analyze(chess, "global"); }}>返回全局</button>}</div><div className="candidates">{visibleLines.length ? visibleLines.map((line, index) => { const move = line.pv.split(" ")[0]; return <button className="candidate" key={`${line.multipv}-${line.pv}`} disabled={!canHumanMove || mode === "setup"} onClick={() => commitMove(move)}><b>{index + 1}</b><span><code>{move.length > 4 ? `${move.slice(0, 4)}=${move[4].toUpperCase()}` : move}</code><small>{line.pv.split(" ").slice(0, 5).join("  ")}</small></span><em>{index === 0 ? "最佳" : "候选"}</em><strong>{scoreText(line.score, chess.turn())}</strong><small>d{line.depth}</small></button>; }) : <p>{status.includes("计算") || status.includes("分析") ? "Stockfish 正在计算…" : "暂无候选着法"}</p>}</div></Module>
       <Module title="局势图"><EvaluationChart points={evaluations} /><p>评分以白方视角显示，曲线上方代表白方占优。</p></Module>
+      <Module title="对弈与分析设置"><div className="mode"><button className={mode === "local" ? "active" : ""} onClick={() => changeMode("local")}>双人对弈</button><button className={mode === "computer" ? "active" : ""} onClick={() => changeMode("computer")}>人机对战</button><button className={mode === "setup" ? "active" : ""} onClick={() => changeMode("setup")}>摆盘</button></div>{mode === "setup" && <div className="setup-tools"><div><button className={setupTool === "move" ? "active" : ""} onClick={() => setSetupTool("move")}>移动</button><button className={setupTool === "erase" ? "active" : ""} onClick={() => setSetupTool("erase")}>删除</button><label>走棋方 <select value={setupTurn} onChange={event => setSetupTurn(event.target.value as Color)}><option value="w">白方</option><option value="b">黑方</option></select></label><button className="finish" onClick={() => finishSetup()}>完成摆盘</button></div>{(["w", "b"] as Color[]).map(color => <div className="setup-pieces" key={color}><small>{color === "w" ? "白方" : "黑方"}</small>{pieceTypes.map(type => <button key={type} className={setupTool === `${color}${type}` ? "active piece-tool" : "piece-tool"} onClick={() => setSetupTool(`${color}${type}`)}>{symbols[`${color}${type}`]}</button>)}</div>)}</div>}<label>分析深度 {depth}<input type="range" min="8" max="22" value={depth} onChange={event => setDepth(Number(event.target.value))} /></label><label>候选着法 <input type="number" min="1" max="8" value={multiPV} onChange={event => setMultiPV(Math.max(1, Math.min(8, Number(event.target.value))))} /></label>{mode === "computer" && <><label>执棋 <select value={human} onChange={event => { const color = event.target.value as Color; setHuman(color); if (chess.turn() !== color) queueMicrotask(() => analyze(chess, "computer")); }}><option value="w">白方</option><option value="b">黑方</option></select></label><label>电脑等级 <select value={computerElo} onChange={event => setComputerElo(Number(event.target.value))}>{[["业余一级",1320],["业余三级",1500],["业余五级",1700],["业余七级",1900],["业余九级",2100],["专业一级",2300],["专业三级",2500],["专业五级",2700],["专业七级",2900],["专业九级",3100]].map(([name,elo]) => <option key={elo} value={elo}>{name} · Elo {elo}</option>)}</select></label></>}<button onClick={() => analyze(chess, "global")}>应用并重新分析</button><p>电脑等级使用 UCI_LimitStrength 与参考 Elo，并非平台官方段级换算。分析时仍可行棋；局面变化后会立即中断旧任务，并分析新局面。</p></Module>
       <Module title="棋谱与存档"><div className="record-head"><span><b>{moveHistory.length ? "当前棋谱" : "新对局"}</b><small>{moveHistory.length} 半回合</small></span><button disabled={!moveHistory.length} onClick={() => goToPly(0)}>开局</button><button disabled={!moveHistory.length} onClick={() => goToPly(moveHistory.length - 1)}>上一步</button><button onClick={() => { setFenText(chess.fen()); setRecordOpen(true); }}>载入</button><button className="primary" onClick={saveGame}>保存</button></div><div className="moves">{rows.length ? rows.map((row, index) => <p key={index}><b>{index + 1}.</b>{row.map((move, side) => <button key={move.uci} onClick={() => goToPly(index * 2 + side + 1)}>{move.san}</button>)}</p>) : <p>还没有着法。可以载入 FEN 局面或浏览器本机存档。</p>}</div></Module>
-      <Module title="对弈与分析设置"><label>分析深度 {depth}<input type="range" min="8" max="22" value={depth} onChange={event => setDepth(Number(event.target.value))} /></label><label>候选着法 <input type="number" min="1" max="8" value={multiPV} onChange={event => setMultiPV(Math.max(1, Math.min(8, Number(event.target.value))))} /></label>{mode === "computer" && <><label>执棋 <select value={human} onChange={event => { const color = event.target.value as Color; setHuman(color); if (chess.turn() !== color) queueMicrotask(() => analyze(chess, "computer")); }}><option value="w">白方</option><option value="b">黑方</option></select></label><label>电脑等级 <select value={computerElo} onChange={event => setComputerElo(Number(event.target.value))}>{[["业余一级",1320],["业余三级",1500],["业余五级",1700],["业余七级",1900],["业余九级",2100],["专业一级",2300],["专业三级",2500],["专业五级",2700],["专业七级",2900],["专业九级",3100]].map(([name,elo]) => <option key={elo} value={elo}>{name} · Elo {elo}</option>)}</select></label></>}<button onClick={() => analyze(chess, "global")}>应用并重新分析</button><p>电脑等级使用 UCI_LimitStrength 与参考 Elo，并非平台官方段级换算。分析时仍可行棋；局面变化后会立即中断旧任务，并分析新局面。</p></Module>
-      <Module title="GUI 与 UCI"><p>内置教练界面直接使用 Stockfish。仓库同时保留标准 UCI 可执行文件，可添加到 Arena、Cute Chess 或 Scid。</p></Module>
     </aside></div><footer>Stockfish · GPL-3.0 · 国际象棋规则由 chess.js 即时执行</footer>
     {recordOpen && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRecordOpen(false); }}><section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-title"><header><div><h2 id="record-title">载入棋谱或局面</h2><p>粘贴 FEN，或选择浏览器本机存档。</p></div><button onClick={() => setRecordOpen(false)}>完成</button></header><label>FEN 局面<textarea value={fenText} onChange={event => setFenText(event.target.value)} /></label><button className="primary wide" disabled={!fenText.trim()} onClick={importFen}>载入此局面</button><h3>本机存档</h3><div className="saved-games">{savedGames.length ? savedGames.map(game => <button key={game.id} onClick={() => loadGame(game)}><b>{game.title}</b><span>{game.moves.length} 半回合 · {new Date(game.savedAt).toLocaleString()}</span></button>) : <p>还没有保存的棋局。</p>}</div></section></div>}
     {outcome && outcomeOpen && <div className="modal-backdrop" role="presentation"><section className="result-modal" role="alertdialog" aria-modal="true" aria-labelledby="result-title"><div className="result-mark">✓</div><h2 id="result-title">{outcome.title}</h2><p>{outcome.detail}</p><div><button className="primary" onClick={reset}>再来一局</button><button onClick={() => setOutcomeOpen(false)}>查看棋局</button></div></section></div>}

@@ -59,7 +59,7 @@ struct ContentView: View {
         return ScrollView {
             VStack(spacing:12) {
                 header
-                controls
+                playToolbar
                 board.frame(width:boardSize,height:boardSize)
                 modules
             }.padding(.horizontal,size.width >= 700 ? 24:14).padding(.vertical,10)
@@ -70,7 +70,7 @@ struct ContentView: View {
         return VStack(spacing:10) {
             header.padding(.horizontal,24)
             HStack(alignment:.top,spacing:20) {
-                VStack(spacing:10) { controls; board.frame(width:boardSize,height:boardSize) }.frame(maxWidth:.infinity)
+                VStack(spacing:10) { playToolbar; board.frame(width:boardSize,height:boardSize) }.frame(maxWidth:.infinity)
                 ScrollView { modules.padding(.trailing,5) }.frame(width:min(460,size.width*0.36))
             }.padding(.horizontal,24)
         }.padding(.top,8)
@@ -81,7 +81,7 @@ struct ContentView: View {
             brandLogo
             VStack(alignment:.leading,spacing:1) {
                 Text("弈思").font(.title2.bold())
-                Text("国际象棋教练").font(.subheadline).foregroundStyle(.secondary)
+                Text("国际象棋思考教练 · iOS").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(); Label(model.engineStatus,systemImage:model.isAnalyzing ? "circle.dotted":"checkmark.circle.fill")
                 .font(.caption).foregroundStyle(model.isAnalyzing ? .orange:green)
@@ -96,32 +96,50 @@ struct ContentView: View {
             Image(systemName:"arrow.up.forward.circle.fill").resizable().scaledToFit().frame(width:58,height:58).foregroundStyle(green)
         }
     }
-    private var controls:some View {
+    private var playToolbar:some View {
         VStack(spacing:9) {
-            Picker("模式",selection:Binding(get:{model.gameMode},set:{model.setMode($0)})) { ForEach(GameMode.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
             HStack {
-                Label("\(model.sideToMove.title)走棋",systemImage:"circle.fill")
+                Button { model.undo() } label:{Image(systemName:"arrow.uturn.backward")}.disabled(!model.canUndo).accessibilityLabel("悔棋")
+                Button { model.redo() } label:{Image(systemName:"arrow.uturn.forward")}.disabled(!model.canRedo).accessibilityLabel("前进")
                 Spacer()
-                Button { model.flip() } label:{Image(systemName:"arrow.up.arrow.down")}
                 Button { model.toggleCandidateArrows() } label: {
                     Text("优").font(.system(size:17,weight:.bold,design:.serif))
                         .foregroundStyle(model.showCandidateArrows ? .white : green)
                         .frame(width:36,height:36).background(model.showCandidateArrows ? green : green.opacity(0.10),in:Circle())
                 }.accessibilityLabel(model.showCandidateArrows ? "隐藏候选箭头" : "显示候选箭头")
-                Button("悔棋",systemImage:"arrow.uturn.backward"){model.undo()}.disabled(model.moveHistory.isEmpty)
-                Button("重开",systemImage:"arrow.clockwise"){model.reset()}
+                Spacer()
+                Label("\(model.sideToMove.title)走棋",systemImage:"circle.fill")
+                Spacer()
+                Button { model.flip() } label:{Image(systemName:"arrow.up.arrow.down")}.accessibilityLabel("翻转棋盘")
+                Button { model.reset() } label:{Image(systemName:"arrow.clockwise")}.accessibilityLabel("重开")
             }.buttonStyle(.borderless)
-            if model.gameMode == .setup { setupControls }
         }
     }
     private var modules:some View {
         LazyVStack(spacing:12) {
             disclosure("教练分析",expanded:$analysisExpanded) { analysis }
             disclosure("局势图",expanded:$chartExpanded) { chart }
+            disclosure("对弈与分析设置",expanded:$settingsExpanded) {
+                VStack(spacing: 10) {
+                    modeControls
+                    settings
+                }
+            }
             disclosure("棋谱与存档",expanded:$recordExpanded) { records }
-            disclosure("对弈与分析设置",expanded:$settingsExpanded) { settings }
             Text("Stockfish 为 GPL-3.0 开源引擎。本应用与 Arena、Cute Chess、Scid 一样通过 UCI 协议使用引擎。").font(.caption2).foregroundStyle(.secondary).padding(.vertical,8)
         }
+    }
+    private var modeControls: some View {
+        VStack(spacing:10) {
+            Picker("模式",selection:Binding(get:{model.gameMode},set:{model.setMode($0)})) { ForEach(GameMode.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
+            if model.gameMode == .computer {
+                Picker("执棋",selection:Binding(get:{model.humanSide},set:{model.setHumanSide($0)})){Text("白方").tag(ChessSide.white);Text("黑方").tag(ChessSide.black)}.pickerStyle(.segmented)
+                Picker("电脑等级", selection: Binding(get:{model.computerElo},set:{model.setComputerElo($0)})) {
+                    ForEach(ComputerLevel.all) { level in Text("\(level.name) · Elo \(level.elo)").tag(level.elo) }
+                }
+            }
+            if model.gameMode == .setup { setupControls }
+        }.padding(12).background(card,in:RoundedRectangle(cornerRadius:12)).overlay(RoundedRectangle(cornerRadius:12).stroke(panelBorder,lineWidth:1))
     }
     private func disclosure<Content:View>(_ title:String,expanded:Binding<Bool>,@ViewBuilder content:()->Content)->some View {
         VStack(spacing:expanded.wrappedValue ? 10:0) {
@@ -163,8 +181,25 @@ struct ContentView: View {
     private var chart:some View {
         GeometryReader { g in
             let points=model.evaluations, mid=g.size.height/2
-            ZStack { Rectangle().fill(chartSurface); Path{p in p.move(to:CGPoint(x:0,y:mid));p.addLine(to:CGPoint(x:g.size.width,y:mid))}.stroke(Color.secondary.opacity(0.4)); if points.count>1 { Path{p in for(i,pt) in points.enumerated(){let x=g.size.width*CGFloat(i)/CGFloat(points.count-1),y=mid-CGFloat(max(-8,min(8,pt.value)))/8*(mid-8);if i==0{p.move(to:CGPoint(x:x,y:y))}else{p.addLine(to:CGPoint(x:x,y:y))}}}.stroke(green,lineWidth:3) } }
+            let axis: CGFloat = 34
+            let largest = points.map { abs($0.value) }.filter { $0 < 100 }.max() ?? 0
+            let range = max(3, ceil(largest))
+            let ticks = [range, range / 2, 0, -range / 2, -range]
+            ZStack(alignment:.topLeading) {
+                Rectangle().fill(chartSurface)
+                ForEach(ticks,id:\.self) { value in
+                    let y=mid-CGFloat(value/range)*(mid-10)
+                    Path{p in p.move(to:CGPoint(x:axis,y:y));p.addLine(to:CGPoint(x:g.size.width,y:y))}.stroke(Color.secondary.opacity(value == 0 ? 0.42:0.16),lineWidth:1)
+                    Text(axisLabel(value)).font(.system(size:9,design:.monospaced)).foregroundStyle(.secondary).frame(width:axis-5,alignment:.trailing).position(x:(axis-5)/2,y:y)
+                }
+                if points.count>1 { Path{p in for(i,pt) in points.enumerated(){let x=axis+(g.size.width-axis)*CGFloat(i)/CGFloat(points.count-1),y=mid-CGFloat(max(-range,min(range,pt.value))/range)*(mid-10);if i==0{p.move(to:CGPoint(x:x,y:y))}else{p.addLine(to:CGPoint(x:x,y:y))}}}.stroke(green,lineWidth:3) }
+            }
         }.frame(height:150).clipShape(RoundedRectangle(cornerRadius:12))
+    }
+    private func axisLabel(_ value:Double)->String {
+        if value == 0 { return "0" }
+        let magnitude = value.rounded() == value ? String(format:"%.0f",abs(value)) : String(format:"%.1f",abs(value))
+        return "\(value > 0 ? "+" : "-")\(magnitude)"
     }
     private var records: some View {
         VStack(spacing:10) {
@@ -240,14 +275,6 @@ struct ContentView: View {
         VStack(spacing:12) {
             HStack { Text("分析深度 \(model.depth)"); Slider(value:Binding(get:{Double(model.depth)},set:{model.depth=Int($0);model.scheduleAnalysis()}),in:8...22,step:1) }
             Stepper("候选着法 \(model.multiPV)",value:Binding(get:{model.multiPV},set:{model.multiPV=$0;model.scheduleAnalysis()}),in:1...8)
-            if model.gameMode == .computer {
-                Picker("执棋",selection:Binding(get:{model.humanSide},set:{model.setHumanSide($0)})){Text("白方").tag(ChessSide.white);Text("黑方").tag(ChessSide.black)}.pickerStyle(.segmented)
-                Picker("电脑等级", selection: Binding(get:{model.computerElo},set:{model.setComputerElo($0)})) {
-                    ForEach(ComputerLevel.all) { level in
-                        Text("\(level.name) · Elo \(level.elo)").tag(level.elo)
-                    }
-                }
-            }
             Text("分析时仍可行棋；局面变化后会立即中断旧任务，并分析新局面。").font(.caption).foregroundStyle(.secondary)
         }.padding(14).background(card,in:RoundedRectangle(cornerRadius:12)).overlay(RoundedRectangle(cornerRadius:12).stroke(panelBorder,lineWidth:1))
     }

@@ -27,9 +27,11 @@ header h1 { font-size: 24px; margin: 0; }
 .mode { display: grid; grid-template-columns: repeat(3, 1fr); background: #dfded7; border-radius: 12px; padding: 3px; }
 .mode button { border: 0; background: transparent; border-radius: 10px; padding: 9px; }
 .mode .active { background: white; box-shadow: 0 1px 4px #0002; color: var(--green); font-weight: 700; }
-.toolbar { display: flex; align-items: center; gap: 6px; min-height: 49px; padding: 6px 2px; }
-.toolbar span { flex: 1; }
+.toolbar { display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 6px; min-height: 49px; padding: 6px 2px; }
+.toolbar .history-tools, .toolbar .view-tools { display: flex; gap: 4px; align-items: center; }
+.toolbar strong { text-align: center; }
 .toolbar button { border: 0; background: transparent; padding: 7px; border-radius: 9px; }
+.toolbar .history-tools button, .toolbar .view-tools button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border-radius: 50%; background: var(--green-soft); color: var(--green); font-size: 20px; }
 .toolbar button:hover { background: var(--green-soft); }
 .toolbar .round { width: 36px; height: 36px; padding: 0; border-radius: 50%; color: var(--green); background: var(--green-soft); font-family: serif; font-weight: 800; }
 .toolbar .round.active { color: white; background: var(--green); }
@@ -88,6 +90,8 @@ aside { display: flex; flex-direction: column; gap: 11px; max-height: calc(100vh
 .chart-wrap { position: relative; height: 150px; overflow: hidden; border-radius: 10px; background: var(--card-solid); }
 .chart { width: 100%; height: 100%; }
 .chart-zero { stroke: #7b837e66; stroke-width: 1; }
+.chart-grid { stroke: #7b837e24; stroke-width: 1; }
+.chart-axis { fill: var(--muted); font: 10px ui-monospace, monospace; }
 .chart-line { fill: none; stroke: var(--green); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .chart-dot { fill: var(--green); }
 .chart-white, .chart-black { position: absolute; left: 7px; color: var(--muted); font-size: 10px; }
