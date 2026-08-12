@@ -10,6 +10,7 @@ type SetupPiece = { color: Color; type: PieceSymbol };
 type SavedGame = { id: string; title: string; savedAt: string; initialFen: string; moves: string[] };
 type EvalPoint = { ply: number; value: number };
 type AnalyzeKind = "global" | "selection" | "computer";
+type GameOutcome = { title: string; detail: string };
 
 const startFen = new Chess().fen();
 const storageKey = "yisi.chess.saved";
@@ -58,6 +59,18 @@ function setupFen(position: Partial<Record<Square, SetupPiece>>, turn: Color) {
   return `${rows.join("/")} ${turn} - - 0 1`;
 }
 
+function gameOutcome(game: Chess): GameOutcome | null {
+  if (game.isCheckmate()) {
+    const winner = game.turn() === "w" ? "黑方" : "白方";
+    return { title: `${winner}获胜`, detail: `将死。${winner}赢得本局。` };
+  }
+  if (game.isStalemate()) return { title: "和棋", detail: "逼和：行棋方没有合法着法，但王未被将军。" };
+  if (game.isThreefoldRepetition()) return { title: "和棋", detail: "同一局面已第三次出现。" };
+  if (game.isDrawByFiftyMoves()) return { title: "和棋", detail: "五十回合内没有吃子或兵的移动。" };
+  if (game.isInsufficientMaterial()) return { title: "和棋", detail: "双方子力不足以将死对方。" };
+  return null;
+}
+
 function EvaluationChart({ points }: { points: EvalPoint[] }) {
   const width = 640, height = 150, padding = 18;
   const coordinates = points.map((point, index) => {
@@ -86,6 +99,7 @@ export default function Page() {
   const [human, setHuman] = useState<Color>("w");
   const [depth, setDepth] = useState(14);
   const [multiPV, setMultiPV] = useState(5);
+  const [computerElo, setComputerElo] = useState(2100);
   const [lines, setLines] = useState<EngineLine[]>([]);
   const [selectedLines, setSelectedLines] = useState<EngineLine[]>([]);
   const [status, setStatus] = useState("Stockfish 准备中");
@@ -100,6 +114,7 @@ export default function Page() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [fenText, setFenText] = useState(startFen);
   const [notice, setNotice] = useState<string | null>(null);
+  const [outcomeOpen, setOutcomeOpen] = useState(false);
   const [setupPosition, setSetupPosition] = useState<Partial<Record<Square, SetupPiece>>>({});
   const [setupTurn, setSetupTurn] = useState<Color>("w");
   const [setupTool, setSetupTool] = useState("move");
@@ -108,15 +123,24 @@ export default function Page() {
   const pendingBestScore = useRef<number | null>(null);
   const moveCount = useRef(0);
 
-  const stop = useCallback(() => {
+  const cancelLocalRequest = useCallback(() => {
     generation.current++;
     controller.current?.abort();
     controller.current = null;
-    fetch("http://127.0.0.1:8788/stop", { method: "POST" }).catch(() => {});
   }, []);
 
+  const stop = useCallback(() => {
+    cancelLocalRequest();
+    fetch("http://127.0.0.1:8788/stop", { method: "POST" }).catch(() => {});
+  }, [cancelLocalRequest]);
+
   async function analyze(game: Chess, kind: AnalyzeKind = "global", searchMoves: string[] = []) {
-    stop();
+    // /analyze atomically supersedes and stops the previous engine search.
+    // Sending a separate, fire-and-forget /stop here can arrive out of order
+    // and accidentally cancel the new computer search instead of the old one.
+    cancelLocalRequest();
+    const outcome = gameOutcome(game);
+    if (outcome) { setLines([]); setSelectedLines([]); setStatus(outcome.title); return; }
     const requestedGeneration = generation.current;
     const abort = new AbortController();
     controller.current = abort;
@@ -125,7 +149,7 @@ export default function Page() {
       const response = await fetch("http://127.0.0.1:8788/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fen: game.fen(), depth, multiPV: kind === "computer" ? 1 : Math.min(multiPV, searchMoves.length || multiPV), searchMoves }),
+        body: JSON.stringify({ fen: game.fen(), depth, multiPV: kind === "computer" ? 1 : Math.min(multiPV, searchMoves.length || multiPV), searchMoves, elo: kind === "computer" ? computerElo : 0 }),
         signal: abort.signal,
       });
       if (!response.ok) throw new Error(`Stockfish HTTP ${response.status}`);
@@ -142,6 +166,7 @@ export default function Page() {
         const next = new Chess(game.fen());
         const made = next.move({ from: move.slice(0, 2) as Square, to: move.slice(2, 4) as Square, promotion: (move[4] || "q") as PieceSymbol });
         setChess(next);
+        if (gameOutcome(next)) setOutcomeOpen(true);
         moveCount.current++;
         setMoveHistory(previous => [...previous, { uci: move, san: made.san, fen: next.fen() }]);
         setSelected(null); setTargets(new Set()); setSelectedLines([]);
@@ -174,7 +199,8 @@ export default function Page() {
     return stop;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canHumanMove = mode !== "computer" || chess.turn() === human;
+  const outcome = gameOutcome(chess);
+  const canHumanMove = !outcome && (mode !== "computer" || chess.turn() === human);
   const files = flipped ? [..."hgfedcba"] : [..."abcdefgh"];
   const ranks = flipped ? [1, 2, 3, 4, 5, 6, 7, 8] : [8, 7, 6, 5, 4, 3, 2, 1];
   const visibleLines = selected ? selectedLines : lines;
@@ -185,15 +211,17 @@ export default function Page() {
   }, []), [moveHistory]);
 
   const commitMove = (move: string) => {
-    stop();
+    cancelLocalRequest();
     const next = new Chess(chess.fen());
     let made;
     try { made = next.move({ from: move.slice(0, 2) as Square, to: move.slice(2, 4) as Square, promotion: (move[4] || "q") as PieceSymbol }); } catch { return; }
     pendingBestScore.current = lines[0] ? scorePawns(lines[0].score) : null;
     setChess(next);
+    if (gameOutcome(next)) setOutcomeOpen(true);
     moveCount.current++;
     setMoveHistory(previous => [...previous, { uci: move, san: made.san, fen: next.fen() }]);
     setSelected(null); setTargets(new Set()); setSelectedLines([]);
+    if (gameOutcome(next)) return;
     if (mode === "computer" && next.turn() !== human) queueMicrotask(() => analyze(next, "computer"));
     else queueMicrotask(() => analyze(next, "global"));
   };
@@ -237,7 +265,7 @@ export default function Page() {
     if (whiteKings !== 1 || blackKings !== 1) { setNotice("摆盘必须恰好包含一个白王和一个黑王。"); return; }
     try {
       const next = new Chess(setupFen(setupPosition, setupTurn));
-      stop(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setEvaluations([]);
+      cancelLocalRequest(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setEvaluations([]);
       setSelected(null); setTargets(new Set()); setModeState(nextMode); setLastMoveGrade("—");
       queueMicrotask(() => analyze(next, nextMode === "computer" && next.turn() !== human ? "computer" : "global"));
     } catch (error) { setNotice(`无法完成摆盘：${(error as Error).message}`); }
@@ -246,9 +274,10 @@ export default function Page() {
   const changeMode = (nextMode: Mode) => {
     if (nextMode === mode) return;
     if (mode === "setup" && nextMode !== "setup") { finishSetup(nextMode); return; }
-    stop(); setSelected(null); setTargets(new Set()); setSelectedLines([]);
+    cancelLocalRequest(); setSelected(null); setTargets(new Set()); setSelectedLines([]);
     if (nextMode === "setup") {
       setModeState("setup"); setSetupPosition(setupFromGame(chess)); setSetupTurn(chess.turn()); setLines([]); setStatus("摆盘模式 · 已暂停分析");
+      fetch("http://127.0.0.1:8788/stop", { method: "POST" }).catch(() => {});
     } else {
       setModeState(nextMode);
       queueMicrotask(() => analyze(chess, nextMode === "computer" && chess.turn() !== human ? "computer" : "global"));
@@ -256,7 +285,7 @@ export default function Page() {
   };
 
   const goToPly = (ply: number) => {
-    stop();
+    cancelLocalRequest();
     const safe = Math.max(0, Math.min(ply, moveHistory.length));
     const nextHistory = moveHistory.slice(0, safe);
     const next = new Chess(safe === 0 ? initialFen : nextHistory[safe - 1].fen);
@@ -267,7 +296,7 @@ export default function Page() {
   };
 
   const reset = () => {
-    stop(); moveCount.current = 0; const next = new Chess(); setChess(next); setInitialFen(startFen); setMoveHistory([]); setEvaluations([]);
+    cancelLocalRequest(); setOutcomeOpen(false); moveCount.current = 0; const next = new Chess(); setChess(next); setInitialFen(startFen); setMoveHistory([]); setEvaluations([]);
     setSelected(null); setTargets(new Set()); setSelectedLines([]); setLastMoveGrade("—"); setLastMoveReview("等待落子，Stockfish 将评价着法质量。");
     setModeState(mode === "setup" ? "local" : mode); queueMicrotask(() => analyze(next, "global"));
   };
@@ -281,14 +310,14 @@ export default function Page() {
     try {
       const next = new Chess(game.initialFen); const entries: MoveEntry[] = [];
       for (const uci of game.moves) { const made = next.move({ from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square, promotion: (uci[4] || "q") as PieceSymbol }); entries.push({ uci, san: made.san, fen: next.fen() }); }
-      stop(); moveCount.current = entries.length; setChess(next); setInitialFen(game.initialFen); setMoveHistory(entries); setEvaluations([]); setRecordOpen(false); setSelected(null); setTargets(new Set());
+      cancelLocalRequest(); moveCount.current = entries.length; setChess(next); setInitialFen(game.initialFen); setMoveHistory(entries); setEvaluations([]); setRecordOpen(false); setSelected(null); setTargets(new Set());
       queueMicrotask(() => analyze(next, "global"));
     } catch (error) { setNotice(`棋谱无法载入：${(error as Error).message}`); }
   };
 
   const importFen = () => {
     try {
-      const next = new Chess(fenText.trim()); stop(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setEvaluations([]); setRecordOpen(false);
+      const next = new Chess(fenText.trim()); cancelLocalRequest(); moveCount.current = 0; setChess(next); setInitialFen(next.fen()); setMoveHistory([]); setEvaluations([]); setRecordOpen(false);
       setSelected(null); setTargets(new Set()); setModeState("local"); queueMicrotask(() => analyze(next, "global"));
     } catch (error) { setNotice(`FEN 无效：${(error as Error).message}`); }
   };
@@ -319,10 +348,11 @@ export default function Page() {
       <Module title="教练分析" open><div className="review"><b>{moveHistory.length ? `上一步：${lastMoveGrade}` : "开局建议"}</b><span>{moveHistory.length ? lastMoveReview : "先看全局候选，再选择计划。"}</span></div><div className="candidate-heading"><b>{selected ? `${selected.toUpperCase()} 棋子的候选着法` : "全局候选着法"}</b>{selected && <button onClick={() => { setSelected(null); setTargets(new Set()); setSelectedLines([]); analyze(chess, "global"); }}>返回全局</button>}</div><div className="candidates">{visibleLines.length ? visibleLines.map((line, index) => { const move = line.pv.split(" ")[0]; return <button className="candidate" key={`${line.multipv}-${line.pv}`} disabled={!canHumanMove || mode === "setup"} onClick={() => commitMove(move)}><b>{index + 1}</b><span><code>{move.length > 4 ? `${move.slice(0, 4)}=${move[4].toUpperCase()}` : move}</code><small>{line.pv.split(" ").slice(0, 5).join("  ")}</small></span><em>{index === 0 ? "最佳" : "候选"}</em><strong>{scoreText(line.score)}</strong><small>d{line.depth}</small></button>; }) : <p>{status.includes("计算") || status.includes("分析") ? "Stockfish 正在计算…" : "暂无候选着法"}</p>}</div></Module>
       <Module title="局势图"><EvaluationChart points={evaluations} /><p>评分以白方视角显示，曲线上方代表白方占优。</p></Module>
       <Module title="棋谱与存档"><div className="record-head"><span><b>{moveHistory.length ? "当前棋谱" : "新对局"}</b><small>{moveHistory.length} 半回合</small></span><button disabled={!moveHistory.length} onClick={() => goToPly(0)}>开局</button><button disabled={!moveHistory.length} onClick={() => goToPly(moveHistory.length - 1)}>上一步</button><button onClick={() => { setFenText(chess.fen()); setRecordOpen(true); }}>载入</button><button className="primary" onClick={saveGame}>保存</button></div><div className="moves">{rows.length ? rows.map((row, index) => <p key={index}><b>{index + 1}.</b>{row.map((move, side) => <button key={move.uci} onClick={() => goToPly(index * 2 + side + 1)}>{move.san}</button>)}</p>) : <p>还没有着法。可以载入 FEN 局面或浏览器本机存档。</p>}</div></Module>
-      <Module title="对弈与分析设置"><label>分析深度 {depth}<input type="range" min="8" max="22" value={depth} onChange={event => setDepth(Number(event.target.value))} /></label><label>候选着法 <input type="number" min="1" max="8" value={multiPV} onChange={event => setMultiPV(Math.max(1, Math.min(8, Number(event.target.value))))} /></label>{mode === "computer" && <label>执棋 <select value={human} onChange={event => { const color = event.target.value as Color; setHuman(color); if (chess.turn() !== color) queueMicrotask(() => analyze(chess, "computer")); }}><option value="w">白方</option><option value="b">黑方</option></select></label>}<button onClick={() => analyze(chess, "global")}>应用并重新分析</button><p>分析时仍可行棋；局面变化后会立即中断旧任务，并分析新局面。</p></Module>
+      <Module title="对弈与分析设置"><label>分析深度 {depth}<input type="range" min="8" max="22" value={depth} onChange={event => setDepth(Number(event.target.value))} /></label><label>候选着法 <input type="number" min="1" max="8" value={multiPV} onChange={event => setMultiPV(Math.max(1, Math.min(8, Number(event.target.value))))} /></label>{mode === "computer" && <><label>执棋 <select value={human} onChange={event => { const color = event.target.value as Color; setHuman(color); if (chess.turn() !== color) queueMicrotask(() => analyze(chess, "computer")); }}><option value="w">白方</option><option value="b">黑方</option></select></label><label>电脑等级 <select value={computerElo} onChange={event => setComputerElo(Number(event.target.value))}>{[["业余一级",1320],["业余三级",1500],["业余五级",1700],["业余七级",1900],["业余九级",2100],["专业一级",2300],["专业三级",2500],["专业五级",2700],["专业七级",2900],["专业九级",3100]].map(([name,elo]) => <option key={elo} value={elo}>{name} · Elo {elo}</option>)}</select></label></>}<button onClick={() => analyze(chess, "global")}>应用并重新分析</button><p>电脑等级使用 UCI_LimitStrength 与参考 Elo，并非平台官方段级换算。分析时仍可行棋；局面变化后会立即中断旧任务，并分析新局面。</p></Module>
       <Module title="GUI 与 UCI"><p>内置教练界面直接使用 Stockfish。仓库同时保留标准 UCI 可执行文件，可添加到 Arena、Cute Chess 或 Scid。</p></Module>
     </aside></div><footer>Stockfish · GPL-3.0 · 国际象棋规则由 chess.js 即时执行</footer>
     {recordOpen && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRecordOpen(false); }}><section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-title"><header><div><h2 id="record-title">载入棋谱或局面</h2><p>粘贴 FEN，或选择浏览器本机存档。</p></div><button onClick={() => setRecordOpen(false)}>完成</button></header><label>FEN 局面<textarea value={fenText} onChange={event => setFenText(event.target.value)} /></label><button className="primary wide" disabled={!fenText.trim()} onClick={importFen}>载入此局面</button><h3>本机存档</h3><div className="saved-games">{savedGames.length ? savedGames.map(game => <button key={game.id} onClick={() => loadGame(game)}><b>{game.title}</b><span>{game.moves.length} 半回合 · {new Date(game.savedAt).toLocaleString()}</span></button>) : <p>还没有保存的棋局。</p>}</div></section></div>}
+    {outcome && outcomeOpen && <div className="modal-backdrop" role="presentation"><section className="result-modal" role="alertdialog" aria-modal="true" aria-labelledby="result-title"><div className="result-mark">✓</div><h2 id="result-title">{outcome.title}</h2><p>{outcome.detail}</p><div><button className="primary" onClick={reset}>再来一局</button><button onClick={() => setOutcomeOpen(false)}>查看棋局</button></div></section></div>}
     {notice && <div className="notice" role="alert"><span>{notice}</span><button onClick={() => setNotice(null)}>好</button></div>}
   </main>;
 }

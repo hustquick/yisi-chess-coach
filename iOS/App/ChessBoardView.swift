@@ -1,46 +1,32 @@
 import SwiftUI
 
 struct ChessBoardView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var viewModel: CoachViewModel
-    private let light = Color(red: 0.92, green: 0.86, blue: 0.71)
-    private let dark = Color(red: 0.33, green: 0.49, blue: 0.38)
+    private var isDark: Bool { colorScheme == .dark }
+    private var lightSquare: Color {
+        isDark ? Color(red: 0.55, green: 0.46, blue: 0.32) : Color(red: 0.92, green: 0.86, blue: 0.71)
+    }
+    private var darkSquare: Color {
+        isDark ? Color(red: 0.16, green: 0.28, blue: 0.23) : Color(red: 0.33, green: 0.49, blue: 0.38)
+    }
+    private var boardBorder: Color { isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.12) }
 
     var body: some View {
         GeometryReader { geometry in
             let cell = geometry.size.width / 8
             ZStack(alignment: .topLeading) {
-                ForEach(0..<64, id: \.self) { index in
-                        let visualRank = index / 8
-                        let visualFile = index % 8
-                        let file = viewModel.boardFlipped ? 7-visualFile : visualFile
-                        let rank = viewModel.boardFlipped ? 7-visualRank : visualRank
-                        let square = squareName(file,rank)
-                        Rectangle().fill((visualFile+visualRank).isMultiple(of: 2) ? light : dark)
-                            .overlay {
-                                if viewModel.legalTargets.contains(square) { Circle().fill(Color.blue.opacity(0.42)).frame(width: cell*0.28) }
-                                if viewModel.selectedSquare == square { Rectangle().fill(Color.yellow.opacity(0.42)) }
-                            }
-                            .frame(width: cell,height: cell).offset(x:CGFloat(visualFile)*cell,y:CGFloat(visualRank)*cell)
-                }
-                if let move=viewModel.lastMove, move.count >= 4 {
-                    ForEach([String(move.prefix(2)),String(move.dropFirst(2).prefix(2))],id:\.self) { square in
-                        if let (f,r)=decode(square) {
-                            let vf=viewModel.boardFlipped ? 7-f:f, vr=viewModel.boardFlipped ? 7-r:r
-                            Rectangle().stroke(Color.orange,lineWidth:max(3,cell*0.05)).frame(width:cell,height:cell).offset(x:CGFloat(vf)*cell,y:CGFloat(vr)*cell)
-                        }
-                    }
-                }
+                squares(cell:cell)
+                lastMoveHighlights(cell:cell)
                 if viewModel.showCandidateArrows { candidateArrows(cell:cell) }
-                ForEach(viewModel.pieces) { piece in
-                    let vf=viewModel.boardFlipped ? 7-piece.file:piece.file, vr=viewModel.boardFlipped ? 7-piece.rank:piece.rank
-                    ChessPieceGlyph(piece:piece,size:cell*0.82)
-                        .frame(width:cell,height:cell).offset(x:CGFloat(vf)*cell,y:CGFloat(vr)*cell).allowsHitTesting(false)
-                }
+                pieces(cell:cell)
                 coordinateLabels(cell:cell)
                 if viewModel.showCandidateArrows { candidateArrowLabels(cell:cell) }
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
-            .clipShape(RoundedRectangle(cornerRadius: 9)).shadow(color:.black.opacity(0.18),radius:10,y:5)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(boardBorder,lineWidth:isDark ? 1.5 : 1))
+            .shadow(color:.black.opacity(isDark ? 0.52 : 0.18),radius:10,y:5)
             .contentShape(Rectangle())
             .highPriorityGesture(SpatialTapGesture().onEnded { event in
                 let vf=max(0,min(7,Int(event.location.x/cell))),vr=max(0,min(7,Int(event.location.y/cell)))
@@ -51,17 +37,64 @@ struct ChessBoardView: View {
         .accessibilityLabel("国际象棋棋盘")
     }
 
+    @ViewBuilder private func squares(cell:CGFloat)->some View {
+        ForEach(0..<64,id:\.self) { index in
+            let visualRank=index/8, visualFile=index%8
+            let file=viewModel.boardFlipped ? 7-visualFile:visualFile
+            let rank=viewModel.boardFlipped ? 7-visualRank:visualRank
+            let square=squareName(file,rank)
+            Rectangle()
+                .fill((visualFile+visualRank).isMultiple(of:2) ? lightSquare:darkSquare)
+                .overlay {
+                    if viewModel.legalTargets.contains(square) {
+                        Circle().fill(Color.cyan.opacity(isDark ? 0.62:0.42)).frame(width:cell*0.28)
+                    }
+                    if viewModel.selectedSquare == square {
+                        Rectangle().fill(Color.yellow.opacity(isDark ? 0.56:0.42))
+                    }
+                }
+                .frame(width:cell,height:cell)
+                .offset(x:CGFloat(visualFile)*cell,y:CGFloat(visualRank)*cell)
+        }
+    }
+
+    @ViewBuilder private func lastMoveHighlights(cell:CGFloat)->some View {
+        if let move=viewModel.lastMove,move.count>=4 {
+            ForEach([String(move.prefix(2)),String(move.dropFirst(2).prefix(2))],id:\.self) { square in
+                if let (file,rank)=decode(square) {
+                    let visualFile=viewModel.boardFlipped ? 7-file:file
+                    let visualRank=viewModel.boardFlipped ? 7-rank:rank
+                    Rectangle()
+                        .stroke(Color.orange,lineWidth:max(3,cell*0.05))
+                        .frame(width:cell,height:cell)
+                        .offset(x:CGFloat(visualFile)*cell,y:CGFloat(visualRank)*cell)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func pieces(cell:CGFloat)->some View {
+        ForEach(viewModel.pieces) { piece in
+            let visualFile=viewModel.boardFlipped ? 7-piece.file:piece.file
+            let visualRank=viewModel.boardFlipped ? 7-piece.rank:piece.rank
+            ChessPieceGlyph(piece:piece,size:cell*0.82)
+                .frame(width:cell,height:cell)
+                .offset(x:CGFloat(visualFile)*cell,y:CGFloat(visualRank)*cell)
+                .allowsHitTesting(false)
+        }
+    }
+
     @ViewBuilder private func coordinateLabels(cell:CGFloat)->some View {
         ForEach(0..<8,id:\.self) { i in
             let file=viewModel.boardFlipped ? 7-i:i, rank=viewModel.boardFlipped ? i+1:8-i
             Text(String(UnicodeScalar(97+file)!))
                 .font(.caption2.bold())
-                .foregroundStyle(i.isMultiple(of:2) ? light:dark)
+                .foregroundStyle(i.isMultiple(of:2) ? lightSquare:darkSquare)
                 .shadow(color:.black.opacity(0.18),radius:0.5)
                 .offset(x:CGFloat(i)*cell+4,y:7*cell+cell-16)
             Text("\(rank)")
                 .font(.caption2.bold())
-                .foregroundStyle(i.isMultiple(of:2) ? dark:light)
+                .foregroundStyle(i.isMultiple(of:2) ? darkSquare:lightSquare)
                 .shadow(color:.black.opacity(0.18),radius:0.5)
                 .offset(x:3,y:CGFloat(i)*cell+2)
         }
@@ -109,14 +142,23 @@ struct ChessBoardView: View {
 /// The default SwiftUI system font substitutes a plainer text glyph on iOS,
 /// so the two sides also lost the crisp white/black contrast of the web UI.
 private struct ChessPieceGlyph: View {
+    @Environment(\.colorScheme) private var colorScheme
     let piece: BoardPiece
     let size: CGFloat
+
+    private var isDark: Bool { colorScheme == .dark }
+    private var whitePiece: Color {
+        isDark ? Color(red:0.98,green:0.95,blue:0.84) : Color.white
+    }
+    private var blackPiece: Color {
+        isDark ? Color(red:0.025,green:0.030,blue:0.027) : Color(red:0.075,green:0.075,blue:0.075)
+    }
 
     var body: some View {
         if piece.side == .white {
             Text(piece.symbol)
                 .font(.custom("Apple Symbols",fixedSize:size))
-                .foregroundStyle(.white)
+                .foregroundStyle(whitePiece)
                 .shadow(color:.black.opacity(0.82),radius:0,x:1,y:0)
                 .shadow(color:.black.opacity(0.82),radius:0,x:-1,y:0)
                 .shadow(color:.black.opacity(0.82),radius:0,x:0,y:1)
@@ -125,8 +167,11 @@ private struct ChessPieceGlyph: View {
         } else {
             Text(piece.symbol)
                 .font(.custom("Apple Symbols",fixedSize:size))
-                .foregroundStyle(Color(red:0.075,green:0.075,blue:0.075))
-                .shadow(color:.white.opacity(0.16),radius:0,x:0,y:-1)
+                .foregroundStyle(blackPiece)
+                .shadow(color:.white.opacity(isDark ? 0.52 : 0.16),radius:0,x:1,y:0)
+                .shadow(color:.white.opacity(isDark ? 0.52 : 0.16),radius:0,x:-1,y:0)
+                .shadow(color:.white.opacity(isDark ? 0.52 : 0.16),radius:0,x:0,y:1)
+                .shadow(color:.white.opacity(isDark ? 0.52 : 0.16),radius:0,x:0,y:-1)
                 .shadow(color:.black.opacity(0.34),radius:1.5,x:0,y:2)
         }
     }

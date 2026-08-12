@@ -1,6 +1,11 @@
 import Foundation
 
 enum ChessRules {
+    struct Outcome: Equatable {
+        let title: String
+        let detail: String
+    }
+
     static func legalMoves(from square: String, in fen: String) -> [String] {
         let position = ParsedPosition.parse(fen: fen)
         guard let (file, rank) = decode(square), let piece = at(file, rank, position.pieces), piece.side == position.sideToMove else { return [] }
@@ -13,6 +18,29 @@ enum ChessRules {
     static func allLegalMoves(in fen: String) -> [String] {
         let position = ParsedPosition.parse(fen: fen)
         return position.pieces.filter { $0.side == position.sideToMove }.flatMap { legalMoves(from: $0.uciSquare, in: fen) }
+    }
+
+    static func outcome(in fen: String, history: [String]) -> Outcome? {
+        let position = ParsedPosition.parse(fen: fen)
+        if allLegalMoves(in: fen).isEmpty {
+            if isKingAttacked(position.sideToMove, in: position) {
+                let winner = position.sideToMove == .white ? "黑方" : "白方"
+                return Outcome(title: "\(winner)获胜", detail: "将死。\(winner)赢得本局。")
+            }
+            return Outcome(title: "和棋", detail: "逼和：行棋方没有合法着法，但王未被将军。")
+        }
+        if position.halfmove >= 100 {
+            return Outcome(title: "和棋", detail: "五十回合内没有吃子或兵的移动。")
+        }
+        let key = fen.split(separator: " ").prefix(4).joined(separator: " ")
+        let repetitions = history.filter { $0.split(separator: " ").prefix(4).joined(separator: " ") == key }.count
+        if repetitions >= 3 {
+            return Outcome(title: "和棋", detail: "同一局面已第三次出现。")
+        }
+        if hasInsufficientMaterial(position.pieces) {
+            return Outcome(title: "和棋", detail: "双方子力不足以将死对方。")
+        }
+        return nil
     }
 
     static func apply(_ move: String, to fen: String) -> String {
@@ -101,6 +129,17 @@ enum ChessRules {
     private static func isKingAttacked(_ side: ChessSide, in position: ParsedPosition) -> Bool {
         guard let king = position.pieces.first(where: { $0.side == side && $0.kind == .king }) else { return true }
         return attacked(king.file, king.rank, by: side.opposite, in: position)
+    }
+
+    private static func hasInsufficientMaterial(_ pieces: [BoardPiece]) -> Bool {
+        let nonKings = pieces.filter { $0.kind != .king }
+        if nonKings.isEmpty { return true }
+        if nonKings.count == 1, let kind = nonKings.first?.kind, kind == .bishop || kind == .knight { return true }
+        if nonKings.allSatisfy({ $0.kind == .bishop }) {
+            let squareColors = Set(nonKings.map { ($0.file + $0.rank) % 2 })
+            return squareColors.count == 1
+        }
+        return false
     }
 
     private static func attacked(_ file: Int, _ rank: Int, by side: ChessSide, in position: ParsedPosition) -> Bool {

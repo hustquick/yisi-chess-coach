@@ -96,6 +96,7 @@ std::string analyzePosition(const std::string& fen, int depth, int multipv,
         if (!gEngine) return "{\"lines\":[],\"error\":\"engine not initialized\"}";
         int safeDepth = std::clamp(depth, 1, 30);
         int safeMultipv = std::clamp(multipv, 1, 32);
+        setOption("UCI_LimitStrength", "false");
         setOption("MultiPV", std::to_string(safeMultipv));
         gEngine->set_position(fen, {});
 
@@ -143,6 +144,33 @@ std::string analyzePosition(const std::string& fen, int depth, int multipv,
     }
 }
 
+std::string bestMoveFor(const std::string& fen, int depth, int elo) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    try {
+        if (!gEngine) return "error:engine not initialized";
+        setOption("UCI_LimitStrength", "true");
+        setOption("UCI_Elo", std::to_string(std::clamp(elo, Search::Skill::LowestElo,
+                                                       Search::Skill::HighestElo)));
+        setOption("MultiPV", "1");
+        gEngine->set_position(fen, {});
+        auto bestMove = std::make_shared<std::string>();
+        gEngine->set_on_bestmove([bestMove](std::string_view move, std::string_view) {
+            *bestMove = std::string(move);
+        });
+        Search::LimitsType limits;
+        limits.depth = std::clamp(depth, 1, 30);
+        limits.startTime = now();
+        gEngine->go(limits);
+        gEngine->wait_for_search_finished();
+        setOption("UCI_LimitStrength", "false");
+        gEngine->set_on_bestmove([](std::string_view, std::string_view) {});
+        return bestMove->empty() ? "error:no legal move" : *bestMove;
+    } catch (const std::exception& error) {
+        if (gEngine) setOption("UCI_LimitStrength", "false");
+        return "error:" + std::string(error.what());
+    }
+}
+
 std::string legalMovesFor(const std::string& fen) {
     std::lock_guard<std::mutex> lock(gEngineMutex);
     try {
@@ -158,6 +186,19 @@ std::string legalMovesFor(const std::string& fen) {
             output << UCIEngine::move(move, false);
         }
         return output.str();
+    } catch (const std::exception& error) {
+        return "error:" + std::string(error.what());
+    }
+}
+
+std::string gameStatusFor(const std::string& fen) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    try {
+        StateInfo state;
+        Position position;
+        position.set(fen, false, &state);
+        if (MoveList<LEGAL>(position).size() != 0) return "ongoing";
+        return position.checkers() ? "checkmate" : "stalemate";
     } catch (const std::exception& error) {
         return "error:" + std::string(error.what());
     }
@@ -201,9 +242,21 @@ Java_com_yisi_chesscoach_StockfishNative_analyze(
 }
 
 extern "C" JNIEXPORT jstring JNICALL
+Java_com_yisi_chesscoach_StockfishNative_bestMove(
+        JNIEnv* env, jclass, jstring fen, jint depth, jint elo) {
+    return toJava(env, bestMoveFor(fromJava(env, fen), depth, elo));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
 Java_com_yisi_chesscoach_StockfishNative_legalMoves(
         JNIEnv* env, jclass, jstring fen) {
     return toJava(env, legalMovesFor(fromJava(env, fen)));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_yisi_chesscoach_StockfishNative_gameStatus(
+        JNIEnv* env, jclass, jstring fen) {
+    return toJava(env, gameStatusFor(fromJava(env, fen)));
 }
 
 extern "C" JNIEXPORT jstring JNICALL

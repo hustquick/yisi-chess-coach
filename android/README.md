@@ -2,6 +2,8 @@
 
 原生 Android View/Canvas 界面，通过 JNI 调用 Stockfish 18。支持手机与平板：竖屏保证棋盘优先，横屏使用棋盘和折叠分析区左右布局。
 
+“对弈与分析设置”可切换双人/人机、执白/执黑和十档参考 Elo；电脑应着由 Stockfish 的真实 UCI 限强搜索选出。
+
 ```bash
 ./tools/setup-engine.sh  # 仓库根目录首次执行
 android/gradlew -p android assembleDebug

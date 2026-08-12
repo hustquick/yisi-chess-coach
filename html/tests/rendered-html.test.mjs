@@ -7,9 +7,10 @@ test("international chess UI keeps board-first and cancellation behavior", async
     readFile(new URL("../app/page.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/globals.css",import.meta.url),"utf8"),
     readFile(new URL("../tools/stockfish-server.mjs",import.meta.url),"utf8")]);
-  assert.match(page,/Stockfish/);assert.match(page,/new Chess/);assert.match(page,/stop\(\)/);
+  assert.match(page,/Stockfish/);assert.match(page,/new Chess/);assert.match(page,/cancelLocalRequest\(\)/);
   assert.match(page,/分析时仍可行棋/);assert.ok(page.indexOf('className="board"')<page.indexOf('教练分析'));
   assert.match(css,/grid-template-columns:\s*repeat\(8,\s*1fr\)/);assert.match(server,/req\.url === "\/stop"/);
+  assert.match(server,/queue = queue\.catch/);assert.match(server,/error: "superseded"/);
   assert.match(server,/STOCKFISH_THREADS/);
 });
 

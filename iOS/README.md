@@ -11,6 +11,8 @@ open iOS/YisiChessCoach.xcodeproj
 
 在 Xcode 中选择 `YisiChessCoach`、签名 Team 和 iPhone/iPad 后点击 Run。最低系统为 iOS/iPadOS 17。
 
+在人机对战的“对弈与分析设置”中可选择十档电脑等级。实际应着使用 `UCI_LimitStrength`/`UCI_Elo`，教练候选分析不受限强影响。
+
 ## 构建验证
 
 ```bash

@@ -20,10 +20,20 @@ let pending = null;
 let queue = Promise.resolve();
 let requestedGeneration = 0;
 
+function sendJSON(res, status, value) {
+  if (res.destroyed || res.writableEnded) return;
+  try {
+    res.writeHead(status, { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(value));
+  } catch (error) {
+    console.error("Stockfish response failed:", error);
+  }
+}
+
 lines.on("line", line => {
   if (!pending) return;
   if (line.startsWith("info depth ") && line.includes(" multipv ") && line.includes(" pv ")) pending.info(line);
-  if (line.startsWith("bestmove ")) { const done = pending.done; pending = null; done(); }
+  if (line.startsWith("bestmove ")) { const done = pending.done; pending = null; done(line.split(/\s+/)[1]); }
 });
 
 function command(text) { engine.stdin.write(`${text}\n`); }
@@ -40,13 +50,23 @@ function parseInfo(line) {
   return { depth, multipv, score, pv };
 }
 
-function analyze({ fen, depth = 12, multiPV = 5, searchMoves = [] }) {
+function analyze({ fen, depth = 12, multiPV = 5, searchMoves = [], elo = 0 }) {
   return new Promise(resolve => {
     const latest = new Map();
     pending = {
       info(line) { const parsed = parseInfo(line); latest.set(parsed.multipv, parsed); },
-      done() { resolve([...latest.values()].sort((a, b) => a.multipv - b.multipv)); },
+      done(bestmove) {
+        const result = [...latest.values()].sort((a, b) => a.multipv - b.multipv);
+        if (elo && result[0] && bestmove) {
+          const continuation = result[0].pv.split(/\s+/).slice(1).join(" ");
+          result[0].pv = `${bestmove}${continuation ? ` ${continuation}` : ""}`;
+        }
+        resolve(result);
+      },
     };
+    const limitedElo = Math.max(1320, Math.min(3190, Number(elo) || 0));
+    command(`setoption name UCI_LimitStrength value ${elo ? "true" : "false"}`);
+    if (elo) command(`setoption name UCI_Elo value ${limitedElo}`);
     command(`setoption name MultiPV value ${Math.max(1, Math.min(64, multiPV))}`);
     command(`position fen ${fen}`);
     const restricted = Array.isArray(searchMoves) && searchMoves.length ? ` searchmoves ${searchMoves.join(" ")}` : "";
@@ -67,16 +87,34 @@ createServer((req, res) => {
   }
   if (req.url !== "/analyze" || req.method !== "POST") { res.writeHead(404, cors); res.end(); return; }
   let body = "";
+  let aborted = false;
+  req.on("aborted", () => { aborted = true; });
   req.on("data", chunk => { body += chunk; });
   req.on("end", () => {
     const generation = ++requestedGeneration;
     // Interrupt the running request immediately. Queued requests check the
     // generation below, so only the newest position is allowed to start.
     command("stop");
-    queue = queue.then(async () => {
-      if (generation !== requestedGeneration || res.destroyed) return;
-      try { const result = await analyze(JSON.parse(body)); if (!res.destroyed) { res.writeHead(200, { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(result)); } }
-      catch (error) { if (!res.destroyed) { res.writeHead(500, cors); res.end(JSON.stringify({ error: String(error) })); } }
+    // Recover the queue even if an already-disconnected HTTP response throws.
+    // Otherwise one rejected request prevents every later engine request from
+    // running and leaves human-vs-computer mode stuck on "calculating".
+    queue = queue.catch(error => {
+      console.error("Stockfish request queue recovered:", error);
+    }).then(async () => {
+      if (generation !== requestedGeneration || aborted || res.destroyed) {
+        sendJSON(res, 409, { error: "superseded" });
+        return;
+      }
+      try {
+        const result = await analyze(JSON.parse(body));
+        if (generation !== requestedGeneration || aborted) {
+          sendJSON(res, 409, { error: "superseded" });
+          return;
+        }
+        sendJSON(res, 200, result);
+      } catch (error) {
+        sendJSON(res, 500, { error: String(error) });
+      }
     });
   });
 }).listen(port, "127.0.0.1", () => console.log(`Local Stockfish ready at http://127.0.0.1:${port} (${threadCount} threads, local NNUE)`));

@@ -9,7 +9,27 @@ struct ContentView: View {
     @State private var settingsExpanded = false
     @State private var showsRecordSheet = false
     @State private var fenText = ""
-    private let paper=Color(red:0.97,green:0.96,blue:0.92), green=Color(red:0.10,green:0.34,blue:0.24)
+    private var isDark: Bool { colorScheme == .dark }
+    private var paper: Color {
+        isDark ? Color(red:0.045,green:0.060,blue:0.052) : Color(red:0.97,green:0.96,blue:0.92)
+    }
+    private var green: Color {
+        isDark ? Color(red:0.34,green:0.77,blue:0.56) : Color(red:0.10,green:0.34,blue:0.24)
+    }
+    private var panel: Color {
+        isDark ? Color(red:0.085,green:0.115,blue:0.100) : Color.white.opacity(0.72)
+    }
+    private var card: Color {
+        isDark ? Color(red:0.105,green:0.145,blue:0.125) : Color.white.opacity(0.66)
+    }
+    private var softCard: Color {
+        isDark ? Color(red:0.090,green:0.125,blue:0.108) : Color.white.opacity(0.62)
+    }
+    private var chartSurface: Color {
+        isDark ? Color(red:0.070,green:0.095,blue:0.082) : Color.white.opacity(0.65)
+    }
+    private var accentWash: Color { green.opacity(isDark ? 0.16 : 0.08) }
+    private var panelBorder: Color { isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.04) }
 
     var body: some View {
         GeometryReader { geo in
@@ -18,12 +38,19 @@ struct ContentView: View {
                 else { portrait(size:geo.size) }
             }.background(paper.ignoresSafeArea())
         }
+        .tint(green)
         .task { model.start() }
         .sheet(isPresented: $showsRecordSheet) { recordSheet }
         .alert("棋谱", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.dismissMessage() } })) {
             Button("好") { model.dismissMessage() }
         } message: {
             Text(model.message ?? "")
+        }
+        .alert(model.gameOutcome?.title ?? "对局结束", isPresented: $model.isShowingGameOutcome) {
+            Button("再来一局") { model.reset() }
+            Button("查看棋局", role: .cancel) {}
+        } message: {
+            Text(model.gameOutcome?.detail ?? "")
         }
     }
 
@@ -98,7 +125,7 @@ struct ContentView: View {
     }
     private func disclosure<Content:View>(_ title:String,expanded:Binding<Bool>,@ViewBuilder content:()->Content)->some View {
         VStack(spacing:expanded.wrappedValue ? 10:0) {
-            Button { withAnimation(.easeInOut(duration:0.2)){expanded.wrappedValue.toggle()} } label:{HStack{Text(title).font(.headline);Spacer();Image(systemName:expanded.wrappedValue ? "chevron.up.circle.fill":"chevron.down.circle.fill").foregroundStyle(green)}.padding(13).background(.white.opacity(0.72),in:RoundedRectangle(cornerRadius:12))}.buttonStyle(.plain)
+            Button { withAnimation(.easeInOut(duration:0.2)){expanded.wrappedValue.toggle()} } label:{HStack{Text(title).font(.headline);Spacer();Image(systemName:expanded.wrappedValue ? "chevron.up.circle.fill":"chevron.down.circle.fill").foregroundStyle(green)}.padding(13).background(panel,in:RoundedRectangle(cornerRadius:12)).overlay(RoundedRectangle(cornerRadius:12).stroke(panelBorder,lineWidth:1))}.buttonStyle(.plain)
             if expanded.wrappedValue { content() }
         }
     }
@@ -111,7 +138,7 @@ struct ContentView: View {
                     Text(model.moveHistory.isEmpty ? "先看全局候选，再选择计划。" : model.lastMoveReview).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-            }.padding(11).background(green.opacity(0.08),in:RoundedRectangle(cornerRadius:10))
+            }.padding(11).background(accentWash,in:RoundedRectangle(cornerRadius:10))
             HStack {
                 Text(model.selectedSquare == nil ? "全局候选着法" : "\(model.selectedSquare!.uppercased()) 棋子的候选着法").font(.caption.bold()).foregroundStyle(.secondary)
                 Spacer()
@@ -128,7 +155,7 @@ struct ContentView: View {
                         }
                         Spacer(); Text(c.rank == 1 ? "最佳" : "候选").font(.caption.bold()).foregroundStyle(c.rank == 1 ? green : .secondary)
                         Text(c.scoreText).foregroundStyle(green); Text("d\(c.depth)").font(.caption).foregroundStyle(.secondary)
-                    }.padding(11).background(.white.opacity(0.66),in:RoundedRectangle(cornerRadius:10))
+                    }.padding(11).background(card,in:RoundedRectangle(cornerRadius:10)).overlay(RoundedRectangle(cornerRadius:10).stroke(panelBorder,lineWidth:1))
                 }.buttonStyle(.plain).disabled(!model.canHumanMove || model.gameMode == .setup)
             }
         }
@@ -136,7 +163,7 @@ struct ContentView: View {
     private var chart:some View {
         GeometryReader { g in
             let points=model.evaluations, mid=g.size.height/2
-            ZStack { Rectangle().fill(.white.opacity(0.65)); Path{p in p.move(to:CGPoint(x:0,y:mid));p.addLine(to:CGPoint(x:g.size.width,y:mid))}.stroke(.gray.opacity(0.4)); if points.count>1 { Path{p in for(i,pt) in points.enumerated(){let x=g.size.width*CGFloat(i)/CGFloat(points.count-1),y=mid-CGFloat(max(-8,min(8,pt.value)))/8*(mid-8);if i==0{p.move(to:CGPoint(x:x,y:y))}else{p.addLine(to:CGPoint(x:x,y:y))}}}.stroke(green,lineWidth:3) } }
+            ZStack { Rectangle().fill(chartSurface); Path{p in p.move(to:CGPoint(x:0,y:mid));p.addLine(to:CGPoint(x:g.size.width,y:mid))}.stroke(Color.secondary.opacity(0.4)); if points.count>1 { Path{p in for(i,pt) in points.enumerated(){let x=g.size.width*CGFloat(i)/CGFloat(points.count-1),y=mid-CGFloat(max(-8,min(8,pt.value)))/8*(mid-8);if i==0{p.move(to:CGPoint(x:x,y:y))}else{p.addLine(to:CGPoint(x:x,y:y))}}}.stroke(green,lineWidth:3) } }
         }.frame(height:150).clipShape(RoundedRectangle(cornerRadius:12))
     }
     private var records: some View {
@@ -164,7 +191,7 @@ struct ContentView: View {
                     }
                 }
             }
-        }.padding(12).background(.white.opacity(0.66),in:RoundedRectangle(cornerRadius:12))
+        }.padding(12).background(card,in:RoundedRectangle(cornerRadius:12)).overlay(RoundedRectangle(cornerRadius:12).stroke(panelBorder,lineWidth:1))
     }
     private var recordSheet: some View {
         NavigationStack {
@@ -204,7 +231,7 @@ struct ContentView: View {
                 }
             }
             Text("摆盘时已暂停引擎；完成后将按当前执棋方重新分析。").font(.caption2).foregroundStyle(.secondary)
-        }.padding(10).background(.white.opacity(0.62),in:RoundedRectangle(cornerRadius:10))
+        }.padding(10).background(softCard,in:RoundedRectangle(cornerRadius:10)).overlay(RoundedRectangle(cornerRadius:10).stroke(panelBorder,lineWidth:1))
     }
     private func setupButton(_ title:String,tool:SetupTool)->some View {
         Button(title) { model.setSetupTool(tool) }.buttonStyle(.bordered).tint(model.setupTool == tool ? green : .gray)
@@ -213,8 +240,15 @@ struct ContentView: View {
         VStack(spacing:12) {
             HStack { Text("分析深度 \(model.depth)"); Slider(value:Binding(get:{Double(model.depth)},set:{model.depth=Int($0);model.scheduleAnalysis()}),in:8...22,step:1) }
             Stepper("候选着法 \(model.multiPV)",value:Binding(get:{model.multiPV},set:{model.multiPV=$0;model.scheduleAnalysis()}),in:1...8)
-            if model.gameMode == .computer { Picker("执棋",selection:$model.humanSide){Text("白方").tag(ChessSide.white);Text("黑方").tag(ChessSide.black)}.pickerStyle(.segmented) }
+            if model.gameMode == .computer {
+                Picker("执棋",selection:Binding(get:{model.humanSide},set:{model.setHumanSide($0)})){Text("白方").tag(ChessSide.white);Text("黑方").tag(ChessSide.black)}.pickerStyle(.segmented)
+                Picker("电脑等级", selection: Binding(get:{model.computerElo},set:{model.setComputerElo($0)})) {
+                    ForEach(ComputerLevel.all) { level in
+                        Text("\(level.name) · Elo \(level.elo)").tag(level.elo)
+                    }
+                }
+            }
             Text("分析时仍可行棋；局面变化后会立即中断旧任务，并分析新局面。").font(.caption).foregroundStyle(.secondary)
-        }.padding(14).background(.white.opacity(0.66),in:RoundedRectangle(cornerRadius:12))
+        }.padding(14).background(card,in:RoundedRectangle(cornerRadius:12)).overlay(RoundedRectangle(cornerRadius:12).stroke(panelBorder,lineWidth:1))
     }
 }

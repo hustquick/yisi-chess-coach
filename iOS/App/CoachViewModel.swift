@@ -10,6 +10,7 @@ final class CoachViewModel: ObservableObject {
     @Published var boardFlipped = false
     @Published var depth = 14
     @Published var multiPV = 5
+    @Published var computerElo = 2100
     @Published private(set) var candidates: [AnalysisCandidate] = []
     @Published private(set) var selectedCandidates: [AnalysisCandidate] = []
     @Published private(set) var isAnalyzing = false
@@ -25,6 +26,8 @@ final class CoachViewModel: ObservableObject {
     @Published private(set) var savedGames: [SavedGame] = []
     @Published var setupTool: SetupTool = .move
     @Published private(set) var message: String?
+    @Published private(set) var gameOutcome: ChessRules.Outcome?
+    @Published var isShowingGameOutcome = false
     @Published private(set) var lastMoveGrade = "—"
     @Published private(set) var lastMoveReview = "等待落子，Stockfish 将评价着法质量。"
 
@@ -32,15 +35,31 @@ final class CoachViewModel: ObservableObject {
     private var generation = 0
     private var pendingBestScore: Double?
 
-    var canHumanMove: Bool { gameMode != .computer || sideToMove == humanSide }
+    var canHumanMove: Bool { gameOutcome == nil && (gameMode != .computer || sideToMove == humanSide) }
 
     func start() { loadSavedGames();scheduleAnalysis() }
     func setMode(_ mode: GameMode) {
         gameMode = mode
         selectedSquare=nil; legalTargets=[]
-        if mode == .setup { cancelAnalysis(); candidates=[]; engineStatus="摆盘模式 · 已暂停分析" }
-        else if mode == .computer && sideToMove != humanSide { playComputerMove() }
+        if mode == .setup {
+            cancelAnalysis(); gameOutcome=nil; isShowingGameOutcome=false; candidates=[]; engineStatus="摆盘模式 · 已暂停分析"
+            return
+        }
+        refresh()
+        if gameOutcome != nil { return }
+        if mode == .computer && sideToMove != humanSide { playComputerMove() }
         else { scheduleAnalysis() }
+    }
+
+    func setHumanSide(_ side: ChessSide) {
+        humanSide = side
+        if gameMode == .computer && sideToMove != humanSide { playComputerMove() }
+        else { scheduleAnalysis() }
+    }
+
+    func setComputerElo(_ elo: Int) {
+        computerElo = min(3190, max(1320, elo))
+        if gameMode == .computer && sideToMove != humanSide { playComputerMove() }
     }
 
     func tap(file: Int, rank: Int) {
@@ -59,7 +78,7 @@ final class CoachViewModel: ObservableObject {
         } else { selectedSquare = nil; legalTargets = []; selectedCandidates=[]; scheduleAnalysis() }
     }
 
-    func reset() { cancelAnalysis(); fen = ChessDefaults.startFEN; moveHistory=[]; fenHistory=[fen]; evaluations=[]; lastMove=nil; lastMoveGrade="—";lastMoveReview="等待落子，Stockfish 将评价着法质量。";refresh(); scheduleAnalysis() }
+    func reset() { cancelAnalysis(); gameOutcome=nil;isShowingGameOutcome=false;fen = ChessDefaults.startFEN; moveHistory=[]; fenHistory=[fen]; evaluations=[]; lastMove=nil; lastMoveGrade="—";lastMoveReview="等待落子，Stockfish 将评价着法质量。";refresh(); scheduleAnalysis() }
     func undo() {
         guard moveHistory.count > 0 else { return }
         cancelAnalysis(); moveHistory.removeLast(); fenHistory.removeLast(); fen = fenHistory.last ?? ChessDefaults.startFEN; lastMove = moveHistory.last; refresh(); scheduleAnalysis()
@@ -92,7 +111,7 @@ final class CoachViewModel: ObservableObject {
     func finishSetup(){setMode(.local)}
 
     func scheduleAnalysis() {
-        guard gameMode != .setup else { return }
+        guard gameMode != .setup, gameOutcome == nil else { return }
         cancelAnalysis()
         let requestedFen = fen, requestedGeneration = generation, requestedDepth = depth, requestedMultiPV = multiPV
         isAnalyzing = true; engineStatus = "Stockfish 计算中"
@@ -139,6 +158,7 @@ final class CoachViewModel: ObservableObject {
         cancelAnalysis() // rules and UI commit happen synchronously before any new search
         fen = ChessRules.apply(move, to: fen)
         moveHistory.append(move); fenHistory.append(fen); lastMove=move; refresh()
+        if gameOutcome != nil { return }
         if gameMode == .computer && sideToMove != humanSide { playComputerMove() } else { scheduleAnalysis() }
     }
 
@@ -147,16 +167,24 @@ final class CoachViewModel: ObservableObject {
         isAnalyzing=true; engineStatus="Stockfish 正在思考"
         analysisTask = Task { [weak self] in
             do {
-                let lines = try await StockfishService.shared.analyze(fen: requestedFen, depth: self?.depth ?? 14, multiPV: 1)
-                guard let self, !Task.isCancelled, requestedGeneration == self.generation, requestedFen == self.fen,
-                      let move=lines.first?.moves.first else { return }
+                guard let self else { return }
+                let move = try await StockfishService.shared.bestMove(
+                    fen: requestedFen, depth: self.depth, elo: self.computerElo
+                )
+                guard !Task.isCancelled, requestedGeneration == self.generation, requestedFen == self.fen,
+                      ChessRules.allLegalMoves(in: requestedFen).contains(move) else { return }
                 self.commit(move)
             } catch { self?.isAnalyzing=false; self?.engineStatus=error.localizedDescription }
         }
     }
 
     private func cancelAnalysis() { generation += 1; analysisTask?.cancel(); analysisTask=nil; StockfishService.shared.interruptForBoardAction(); isAnalyzing=false }
-    private func refresh() { let p=ParsedPosition.parse(fen: fen); pieces=p.pieces; sideToMove=p.sideToMove; selectedSquare=nil; legalTargets=[];selectedCandidates=[];isAnalyzingSelection=false }
+    private func refresh() {
+        let p=ParsedPosition.parse(fen: fen); pieces=p.pieces; sideToMove=p.sideToMove; selectedSquare=nil; legalTargets=[];selectedCandidates=[];isAnalyzingSelection=false
+        let nextOutcome = gameMode == .setup ? nil : ChessRules.outcome(in: fen, history: fenHistory)
+        if nextOutcome != gameOutcome { gameOutcome = nextOutcome; isShowingGameOutcome = nextOutcome != nil }
+        if let nextOutcome { engineStatus = nextOutcome.title; candidates = []; isAnalyzing = false }
+    }
     private func square(_ file:Int,_ rank:Int)->String { "\(Character(UnicodeScalar(97+file)!))\(8-rank)" }
     private func legalMove(from:String,to:String)->String? { ChessRules.legalMoves(from: from, in: fen).first { String($0.dropFirst(2).prefix(2)) == to } }
     private func describe(_ move:String)->String { move.count > 4 ? "\(move.prefix(4))=\(move.suffix(1).uppercased())" : move }

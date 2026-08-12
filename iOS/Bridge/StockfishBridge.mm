@@ -128,6 +128,7 @@ extern "C" const char *pf_analyze(const char *fen,
 
         const int safeDepth = std::clamp(depth, 1, 30);
         const int safeMultiPV = std::clamp(multipv, 1, 32);
+        setOption("UCI_LimitStrength", "false");
         setOption("MultiPV", std::to_string(safeMultiPV));
 
         gEngine->set_position(fen ? fen : "", {});
@@ -178,6 +179,44 @@ extern "C" const char *pf_analyze(const char *fen,
     catch (const std::exception& error)
     {
         gResult = "{\"lines\":[],\"error\":\"" + escapeJSON(error.what()) + "\"}";
+    }
+    return gResult.c_str();
+}
+
+extern "C" const char *pf_best_move(const char *fen, int depth, int elo) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    try
+    {
+        if (!gEngine)
+        {
+            gResult = "error:engine not initialized";
+            return gResult.c_str();
+        }
+
+        setOption("UCI_LimitStrength", "true");
+        setOption("UCI_Elo", std::to_string(std::clamp(elo, Search::Skill::LowestElo,
+                                                       Search::Skill::HighestElo)));
+        setOption("MultiPV", "1");
+        gEngine->set_position(fen ? fen : "", {});
+
+        auto bestMove = std::make_shared<std::string>();
+        gEngine->set_on_bestmove([bestMove](std::string_view move, std::string_view) {
+            *bestMove = std::string(move);
+        });
+        Search::LimitsType limits;
+        limits.depth = std::clamp(depth, 1, 30);
+        limits.startTime = now();
+        gEngine->go(limits);
+        gEngine->wait_for_search_finished();
+        setOption("UCI_LimitStrength", "false");
+        gEngine->set_on_bestmove([](std::string_view, std::string_view) {});
+        gResult = bestMove->empty() ? "error:no legal move" : *bestMove;
+    }
+    catch (const std::exception& error)
+    {
+        if (gEngine)
+            setOption("UCI_LimitStrength", "false");
+        gResult = "error:" + std::string(error.what());
     }
     return gResult.c_str();
 }

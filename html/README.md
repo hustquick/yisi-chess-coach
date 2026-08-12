@@ -2,6 +2,8 @@
 
 React 响应式界面，使用 `chess.js` 在浏览器主线程立即执行合法行棋，使用本地多线程 Stockfish 18 UCI 进程进行后台分析。
 
+人机对战可在折叠设置中选择十档参考 Elo；本地服务为电脑应着发送 `UCI_LimitStrength true` 和 `UCI_Elo`，普通教练分析会恢复完整强度。
+
 ```bash
 npm install
 npm run engine:setup   # 首次需联网，编译 Stockfish 18

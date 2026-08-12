@@ -45,13 +45,12 @@ final class StockfishService: @unchecked Sendable {
         pf_stop()
     }
 
-    /// Fire-and-forget interruption for a touch-driven board action. The C++
-    /// stop flag is thread-safe; dispatching it keeps native engine work out of
-    /// the main actor's tap transaction.
+    /// Interrupt before the replacement job is enqueued. `Engine::stop()` only
+    /// flips Stockfish's thread-safe stop state and does not wait for the search.
+    /// Calling it synchronously avoids a delayed stop racing with — and
+    /// accidentally cancelling — the new computer-move search.
     func interruptForBoardAction() {
-        DispatchQueue.global(qos: .userInteractive).async {
-            pf_stop()
-        }
+        pf_stop()
     }
 
     func analyze(fen: String, depth: Int, multiPV: Int, searchMoves: [String] = []) async throws -> [EngineLine] {
@@ -69,6 +68,19 @@ final class StockfishService: @unchecked Sendable {
             else { throw StockfishError.malformedResponse }
             if let error = payload.error { throw StockfishError.engine(error) }
             return payload.lines.sorted { $0.multipv < $1.multipv }
+        }
+    }
+
+    func bestMove(fen: String, depth: Int, elo: Int) async throws -> String {
+        try await onEngineQueue {
+            try self.ensureInitialized()
+            let response: String = fen.withCString { pointer in
+                guard let result = pf_best_move(pointer, Int32(depth), Int32(elo)) else { return "" }
+                return String(cString: result)
+            }
+            if response.hasPrefix("error:") { throw StockfishError.engine(String(response.dropFirst(6))) }
+            guard response.count >= 4 else { throw StockfishError.malformedResponse }
+            return response
         }
     }
 
@@ -136,9 +148,7 @@ final class StockfishService: @unchecked Sendable {
             // Cancellation must interrupt native iterative deepening as well as
             // the Swift task. Otherwise a superseded search keeps the serial
             // engine queue occupied until its original depth is reached.
-            DispatchQueue.global(qos: .userInteractive).async {
-                pf_stop()
-            }
+            pf_stop()
         }
     }
 }

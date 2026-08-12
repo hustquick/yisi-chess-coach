@@ -14,6 +14,20 @@ enum GameMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+struct ComputerLevel: Identifiable, Hashable, Sendable {
+    let name: String
+    let elo: Int
+    var id: Int { elo }
+
+    static let all: [ComputerLevel] = [
+        .init(name: "业余一级", elo: 1320), .init(name: "业余三级", elo: 1500),
+        .init(name: "业余五级", elo: 1700), .init(name: "业余七级", elo: 1900),
+        .init(name: "业余九级", elo: 2100), .init(name: "专业一级", elo: 2300),
+        .init(name: "专业三级", elo: 2500), .init(name: "专业五级", elo: 2700),
+        .init(name: "专业七级", elo: 2900), .init(name: "专业九级", elo: 3100)
+    ]
+}
+
 enum SetupTool: Hashable, Sendable { case move, erase, piece(ChessSide, PieceKind) }
 enum PieceKind: String, CaseIterable, Hashable, Sendable { case king, queen, rook, bishop, knight, pawn }
 

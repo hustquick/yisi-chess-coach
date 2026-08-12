@@ -7,6 +7,7 @@ guard arguments.count == 3 else {
 
 let canvasSize = NSSize(width: 1024, height: 1024)
 let brandRed = NSColor(calibratedRed: 0.67, green: 0.10, blue: 0.08, alpha: 1)
+let darkFrame = NSColor(calibratedWhite: 0.055, alpha: 1)
 
 func roundedRect(_ rect: NSRect, radius: CGFloat, color: NSColor) {
     color.setFill()
@@ -83,7 +84,7 @@ func drawPromotionMark(color: NSColor) {
     roundedRect(NSRect(x: 334, y: 190, width: 356, height: 68), radius: 34, color: color)
 }
 
-func render(output: String, innerColor: NSColor, markColor: NSColor) throws {
+func render(output: String, frameColor: NSColor, innerColor: NSColor, markColor: NSColor) throws {
     guard let bitmap = NSBitmapImageRep(
         bitmapDataPlanes: nil,
         pixelsWide: 1024,
@@ -101,11 +102,11 @@ func render(output: String, innerColor: NSColor, markColor: NSColor) throws {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
     let canvas = NSRect(origin: .zero, size: canvasSize)
-    brandRed.setFill()
+    frameColor.setFill()
     canvas.fill()
 
-    // These dimensions exactly match the Xiangqi icon. The red frame therefore
-    // has the same thickness, corner radius and optical weight across the suite.
+    // These dimensions exactly match the Xiangqi icon. Both light and dark
+    // frames keep the same thickness, corner radius and optical weight.
     roundedRect(canvas.insetBy(dx: 106, dy: 106), radius: 154, color: innerColor)
     drawPromotionMark(color: markColor)
     NSGraphicsContext.restoreGraphicsState()
@@ -118,11 +119,13 @@ func render(output: String, innerColor: NSColor, markColor: NSColor) throws {
 
 try render(
     output: arguments[1],
+    frameColor: brandRed,
     innerColor: NSColor(calibratedRed: 0.98, green: 0.75, blue: 0.12, alpha: 1),
     markColor: brandRed
 )
 try render(
     output: arguments[2],
+    frameColor: darkFrame,
     innerColor: NSColor(calibratedRed: 0.16, green: 0.045, blue: 0.055, alpha: 1),
     markColor: NSColor(calibratedRed: 1.00, green: 0.72, blue: 0.08, alpha: 1)
 )
