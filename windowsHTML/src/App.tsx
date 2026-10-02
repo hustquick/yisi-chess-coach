@@ -240,7 +240,7 @@ export default function Page() {
         }
       }
     } catch (error) {
-      if ((error as Error).name !== "AbortError" && requestedGeneration === generation.current) setStatus("Stockfish 浏览器引擎启动失败，棋盘仍可正常行棋");
+      if ((error as Error).name !== "AbortError" && requestedGeneration === generation.current) setStatus(document.querySelector('meta[name="yisi-engine-endpoint"]') ? `云端分析：${(error as Error).message || '连接失败，请重试'}` : "Stockfish 浏览器引擎启动失败，棋盘仍可正常行棋");
     }
   }
 
@@ -438,7 +438,7 @@ export default function Page() {
   const variationGeometry = variationFrame ? arrowGeometry(variationFrame.move) : null;
 
   return <main>
-    <header><picture><source srcSet="./favicon-dark.png" media="(prefers-color-scheme: dark)" /><img className="logo" src="./favicon-light.png" alt="兵升变应用图标" /></picture><div className="brand"><h1>弈思</h1><p>国际象棋思考教练 · Windows HTML</p></div><span className="status">{status}</span></header>
+    <header><picture><source srcSet="./favicon-dark.png" media="(prefers-color-scheme: dark)" /><img className="logo" src="./favicon-light.png" alt="兵升变应用图标" /></picture><div className="brand"><h1>弈思</h1><p>国际象棋思考教练{document.querySelector('meta[name="yisi-engine-endpoint"]') ? ' · Stockfish 18 云端' : ''}</p></div><span className="status">{status}</span></header>
     <div className="layout"><section className="play">
       <div className="toolbar"><div className="history-tools"><button disabled={!moveHistory.length || mode === "setup"} onClick={() => goToPly(moveHistory.length - 1)} aria-label="悔棋">↶</button><button disabled={!redoEntries.length || mode === "setup"} onClick={redoMove} aria-label="前进">↷</button></div><button className={showArrows ? "round active" : "round"} onClick={() => setShowArrows(value => !value)} aria-label={showArrows ? "隐藏候选箭头" : "显示候选箭头"}>优</button><strong>{mode === "setup" ? "摆盘模式" : `${chess.turn() === "w" ? "白方" : "黑方"}走棋`}</strong><div className="view-tools"><button onClick={() => setFlipped(value => !value)} aria-label="翻转棋盘">⇅</button><button onClick={reset} aria-label="重开">↻</button></div></div>
       <div className="board-shell"><div className="board">{ranks.flatMap((rank, ri) => files.map((file, fi) => {

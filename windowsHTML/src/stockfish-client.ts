@@ -208,6 +208,13 @@ function browserEngine() {
 }
 
 export function analyzeWithBrowserStockfish(options: SearchOptions, signal?: AbortSignal) {
+  const endpoint = document.querySelector<HTMLMetaElement>('meta[name="yisi-engine-endpoint"]')?.content;
+  if (endpoint) {
+    const url = new URL(endpoint);
+    if (url.protocol !== 'https:' || url.origin !== 'https://141.148.168.171' || url.pathname !== '/chess-engine') throw new Error('云端引擎配置异常');
+    return fetch(endpoint + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options), signal })
+      .then(async response => { const value = await response.json(); if (!response.ok) throw new Error(value.error ?? '云端分析失败'); return value as BrowserEngineLine[]; });
+  }
   return browserEngine().analyze(options, signal);
 }
 

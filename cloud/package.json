@@ -1,0 +1,1 @@
+{"name":"yisi-chess-cloud","private":true,"type":"module","dependencies":{"chess.js":"1.4.0"},"devDependencies":{"playwright":"1.63.0"},"scripts":{"start":"node server.mjs","test":"node test-api.mjs","test:web":"node test-web.mjs"}}

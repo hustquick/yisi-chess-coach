@@ -106,4 +106,4 @@ make -C shared/Stockfish/src -j4 build ARCH=apple-silicon  # Apple Silicon
 
 ## 开源与隐私
 
-Stockfish 按 GPL-3.0 发布。完整对应源码、作者信息和许可证位于 [`shared/Stockfish/`](shared/Stockfish/)，iOS 与 Android 安装包也会附带 GPL 文件。引擎分析在本机完成，不上传对局。
+Stockfish 按 GPL-3.0 发布。完整对应源码、作者信息和许可证位于 [`shared/Stockfish/`](shared/Stockfish/)，iOS 与 Android 安装包也会附带 GPL 文件。离线版分析在本机完成，不上传对局。[在线网页](https://yisi-chess-pwa.pages.dev/)现使用凤凰城云端原生 Stockfish 18 完整 NNUE；分析会上传当前局面及参数，不发送浏览器存档列表。部署、计算预算与验证范围见 [cloud/README.md](cloud/README.md)。

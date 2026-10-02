@@ -1,5 +1,8 @@
 .DS_Store
 /windowsHTML/node_modules/
+/cloud/.pages-dist/
+/cloud/node_modules/
+/.wrangler/
 
 # HTML dependencies and generated output
 /html/node_modules/
