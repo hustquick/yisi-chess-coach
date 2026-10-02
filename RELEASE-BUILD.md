@@ -1,5 +1,8 @@
 # 2026-10-02 发布包构建
 
+Android 1.2.0（versionCode 4），发布标签 v2026.10.02.2。本次修订 Android 布局和功能，
+离线 HTML 沿用上一版已验证完整包。功能和验证范围见 android/README.md。
+
 本次提供 Android Debug 侧载 APK（Android 8.0+、arm64-v8a）与完整离线 HTML 包。
 APK 使用原有 Android 调试证书签名；仅公开证书指纹，不提供私钥。
 证书 SHA-256：4057fe454cd3e892cf2745422cd5efe06cba5469037376f26f869aeecd459ce9。
@@ -11,6 +14,7 @@ APK 使用原有 Android 调试证书签名；仅公开证书指纹，不提供�
 
 ```sh
 android/gradlew -p android assembleDebug --max-workers=2
+android/gradlew -p android testDebugUnitTest --max-workers=2
 ```
 
 输出：android/app/build/outputs/apk/debug/app-debug.apk。
@@ -28,6 +32,10 @@ npm --prefix windowsHTML run build
 浏览器引擎固定为 Stockfish.js v18.0.8；对应源码位于 windowsHTML/source/stockfish-js，来源 https://github.com/nmrugg/stockfish.js/tree/v18.0.8。
 
 ## 已验证
+
+- Android 1.2.0 的 9 项回归测试通过（7 项 UI/存档状态测试、2 项 FEN 测试，含 16 个非法输入案例）。
+- 竖屏 393×800 与横屏 800×393 的界面渲染检查通过；完整棋盘可见，候选箭头开关确实改变像素。
+- UI 测试使用引擎替身，不宣称完成真实 Stockfish 或用户 Pixel 模拟器的现场启动测试。
 
 本次 16 KB 兼容修订使用 NDK r28 编译引擎，静态链接 C++ 标准库，
 显式设置 LOAD/RELRO 的 16 KB 链接对齐，并采用未压缩原生库打包。
