@@ -1,0 +1,23 @@
+Stockfish browser engine source and build information
+=====================================================
+
+Bundled engine: Stockfish.js 18.0.8 lite single-thread, based on Stockfish 18
+Stockfish.js source: https://github.com/nmrugg/stockfish.js
+Stockfish source: https://github.com/official-stockfish/Stockfish
+Stockfish 18 tag: sf_18
+Stockfish commit: cb3d4ee9b47d0c5aae855b12379378ea1439675c
+License: GNU GPL v3 (see STOCKFISH-GPL-3.0.txt)
+
+The single-thread WebAssembly build works without SharedArrayBuffer or
+cross-origin isolation. For direct file:// use, engine-data.js stores the
+WebAssembly bytes as Base64. The application reconstructs the upstream
+Stockfish factory inside a local Blob Worker and performs all analysis on the
+device. No chess position is uploaded to a server.
+
+The unmodified Stockfish 18 source used by the other platforms in this
+repository is available at ..\shared\Stockfish. The exact Stockfish.js
+port source is available from the project URL above.
+
+chess.js source: https://github.com/jhlywa/chess.js
+Bundled chess.js version: 1.4.0
+License: BSD-2-Clause (see CHESS.JS-LICENSE.txt)

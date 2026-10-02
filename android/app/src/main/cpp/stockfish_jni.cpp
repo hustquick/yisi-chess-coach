@@ -89,6 +89,11 @@ struct AnalysisLine {
     size_t nps = 0;
 };
 
+struct AnalysisState {
+    std::map<size_t, AnalysisLine> lines;
+    std::mutex mutex;
+};
+
 std::string analyzePosition(const std::string& fen, int depth, int multipv,
                             const std::string& searchMoves) {
     std::lock_guard<std::mutex> lock(gEngineMutex);
@@ -100,11 +105,10 @@ std::string analyzePosition(const std::string& fen, int depth, int multipv,
         setOption("MultiPV", std::to_string(safeMultipv));
         gEngine->set_position(fen, {});
 
-        std::map<size_t, AnalysisLine> lines;
-        std::mutex linesMutex;
-        gEngine->set_on_update_full([&](const Engine::InfoFull& info) {
-            std::lock_guard<std::mutex> callbackLock(linesMutex);
-            auto& line = lines[info.multiPV];
+        auto state = std::make_shared<AnalysisState>();
+        gEngine->set_on_update_full([state](const Engine::InfoFull& info) {
+            std::lock_guard<std::mutex> callbackLock(state->mutex);
+            auto& line = state->lines[info.multiPV];
             if (info.depth < line.depth) return;
             line.depth = info.depth;
             line.selDepth = info.selDepth;
@@ -125,7 +129,8 @@ std::string analyzePosition(const std::string& fen, int depth, int multipv,
         std::ostringstream json;
         json << "{\"lines\":[";
         bool first = true;
-        for (const auto& [rank, line] : lines) {
+        std::lock_guard<std::mutex> stateLock(state->mutex);
+        for (const auto& [rank, line] : state->lines) {
             if (line.pv.empty()) continue;
             if (!first) json << ',';
             first = false;
@@ -138,6 +143,7 @@ std::string analyzePosition(const std::string& fen, int depth, int multipv,
                  << ",\"nps\":" << line.nps << '}';
         }
         json << "],\"error\":null}";
+        gEngine->set_on_update_full([](const Engine::InfoFull&) {});
         return json.str();
     } catch (const std::exception& error) {
         return "{\"lines\":[],\"error\":\"" + escapeJson(error.what()) + "\"}";
@@ -148,6 +154,7 @@ std::string bestMoveFor(const std::string& fen, int depth, int elo) {
     std::lock_guard<std::mutex> lock(gEngineMutex);
     try {
         if (!gEngine) return "error:engine not initialized";
+        gEngine->set_on_update_full([](const Engine::InfoFull&) {});
         setOption("UCI_LimitStrength", "true");
         setOption("UCI_Elo", std::to_string(std::clamp(elo, Search::Skill::LowestElo,
                                                        Search::Skill::HighestElo)));
@@ -159,6 +166,7 @@ std::string bestMoveFor(const std::string& fen, int depth, int elo) {
         });
         Search::LimitsType limits;
         limits.depth = std::clamp(depth, 1, 30);
+        limits.movetime = std::clamp(450 + (elo - 1320) / 2, 450, 1200);
         limits.startTime = now();
         gEngine->go(limits);
         gEngine->wait_for_search_finished();
@@ -199,6 +207,75 @@ std::string gameStatusFor(const std::string& fen) {
         position.set(fen, false, &state);
         if (MoveList<LEGAL>(position).size() != 0) return "ongoing";
         return position.checkers() ? "checkmate" : "stalemate";
+    } catch (const std::exception& error) {
+        return "error:" + std::string(error.what());
+    }
+}
+
+char sanPieceLetter(PieceType type) {
+    switch (type) {
+        case KING: return 'K';
+        case QUEEN: return 'Q';
+        case ROOK: return 'R';
+        case BISHOP: return 'B';
+        case KNIGHT: return 'N';
+        default: return '\0';
+    }
+}
+
+std::string sanFor(const std::string& fen, const std::string& uciMove) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    try {
+        StateInfo currentState;
+        StateInfo nextState;
+        Position position;
+        position.set(fen, false, &currentState);
+        const Move move = UCIEngine::to_move(position, uciMove);
+        if (move == Move::none()) return "error:illegal move";
+
+        const std::string canonical = UCIEngine::move(move, false);
+        const std::string from = canonical.substr(0, 2);
+        const std::string to = canonical.substr(2, 2);
+        const PieceType type = type_of(position.moved_piece(move));
+        std::string notation;
+        if (move.type_of() == CASTLING) {
+            notation = to[0] == 'g' ? "O-O" : "O-O-O";
+        } else {
+            const bool capture = position.capture(move);
+            if (type == PAWN) {
+                if (capture) notation += from[0];
+            } else {
+                notation += sanPieceLetter(type);
+                bool ambiguous = false;
+                bool sameFile = false;
+                bool sameRank = false;
+                for (const Move candidate : MoveList<LEGAL>(position)) {
+                    if (candidate == move || candidate.to_sq() != move.to_sq()
+                        || type_of(position.moved_piece(candidate)) != type)
+                        continue;
+                    ambiguous = true;
+                    const std::string candidateFrom = UCIEngine::square(candidate.from_sq());
+                    sameFile = sameFile || candidateFrom[0] == from[0];
+                    sameRank = sameRank || candidateFrom[1] == from[1];
+                }
+                if (ambiguous) {
+                    if (!sameFile) notation += from[0];
+                    else if (!sameRank) notation += from[1];
+                    else notation += from;
+                }
+            }
+            if (capture) notation += 'x';
+            notation += to;
+            if (move.type_of() == PROMOTION) {
+                notation += '=';
+                notation += sanPieceLetter(move.promotion_type());
+            }
+        }
+
+        const bool check = position.gives_check(move);
+        position.do_move(move, nextState);
+        if (check) notation += MoveList<LEGAL>(position).size() == 0 ? '#' : '+';
+        return notation;
     } catch (const std::exception& error) {
         return "error:" + std::string(error.what());
     }
@@ -263,6 +340,12 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_yisi_chesscoach_StockfishNative_applyMove(
         JNIEnv* env, jclass, jstring fen, jstring move) {
     return toJava(env, applyMoveTo(fromJava(env, fen), fromJava(env, move)));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_yisi_chesscoach_StockfishNative_san(
+        JNIEnv* env, jclass, jstring fen, jstring move) {
+    return toJava(env, sanFor(fromJava(env, fen), fromJava(env, move)));
 }
 
 extern "C" JNIEXPORT void JNICALL

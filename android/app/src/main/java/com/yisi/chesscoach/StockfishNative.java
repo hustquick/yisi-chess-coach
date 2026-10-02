@@ -11,5 +11,6 @@ final class StockfishNative {
     static native String legalMoves(String fen);
     static native String gameStatus(String fen);
     static native String applyMove(String fen, String move);
+    static native String san(String fen, String move);
     static native void stop();
 }

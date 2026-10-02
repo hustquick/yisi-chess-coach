@@ -1,0 +1,32 @@
+弈思国际象棋教练（Windows 离线 HTML 版）
+============================================
+
+运行方法
+--------
+1. 将压缩包完整解压到 Windows 电脑的普通文件夹。
+2. 使用 Microsoft Edge 或 Google Chrome 双击打开 index.html。
+3. 等待页面右上角显示 Stockfish 深度后即可使用。
+
+重要说明
+--------
+- 不需要安装 Node.js、Python、服务器或其他软件。
+- 不需要联网；Stockfish WebAssembly 引擎已封装在 engine-data.js 中。
+- 请勿单独复制 index.html。index.html、app.js、style.css、
+  stockfish.js、engine-data.js 与图标文件必须保持在同一文件夹内。
+- 推荐使用 64 位 Windows 10/11 及最新版 Edge/Chrome。
+- 直接打开时浏览器地址以 file:/// 开头是正常现象。
+
+主要功能
+--------
+- 完整国际象棋规则，包含王车易位、吃过路兵、兵升变和将军判定
+- 双人对弈、人机对战和自由摆盘
+- Stockfish 全局候选、选中棋子的候选与局面评分
+- 候选变化动画、局势图、惔棋、前进、重开与棋盘翻转
+- FEN 局面载入、SAN 棋谱和浏览器本机存档
+- 十档参考等级（业余一级至专业九级）与可调分析深度
+
+开源许可
+--------
+Stockfish.js/Stockfish 按 GNU GPL v3 分发，许可全文见
+STOCKFISH-GPL-3.0.txt，来源和构建信息见 STOCKFISH-SOURCE.txt。
+chess.js 按 BSD-2-Clause 许可分发，见 CHESS.JS-LICENSE.txt。
